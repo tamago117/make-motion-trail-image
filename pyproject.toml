@@ -1,16 +1,34 @@
 [project]
 name = "make-motion-trail-image"
 version = "0.1.0"
-description = "Make motion trail image using Segment Anything."
+description = "Make motion trail image using Segment Anything Model 3."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-    "fire>=0.7.0",
-    "numpy>=2.2.5",
+    "decord",
+    "einops",
+    "hydra-core",
+    "matplotlib",
+    "omegaconf",
+    "open-clip-torch",
     "opencv-python>=4.11.0.86",
-    "pathlib>=1.0.1",
-    "segment-anything>=1.0",
-    "torch>=2.6.0",
-    "torchvision>=0.21.0",
-    "tqdm>=4.67.1",
+    "gradio",
+    "psutil",
+    "pycocotools",
+    "sam3",
+    "scikit-image",
+    "scikit-learn",
+    "scipy",
+    "submitit",
+    "torchmetrics",
+]
+
+[tool.uv.sources]
+sam3 = { git = "https://github.com/facebookresearch/sam3.git"}
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.5.1",
+    "ruff>=0.14.13",
+    "ty>=0.0.12",
 ]

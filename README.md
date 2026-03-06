@@ -1,49 +1,51 @@
-# Automatically Create Motion Trail Images with Segment Anything
+# Motion Trail Image Creator
+
+Create motion-trail composite images interactively using **SAM 3** (Segment Anything Model 3).
+
+Click on each frame to select the object you want to extract, then generate a single composite image showing the object's motion across all frames.
 
 <p align="center">
-  <img src="media/example.png" width="800">
+  <img src="media/gui.png" width="800">
 </p>
 
 ## Setup
 
-Download the Segment Anything model from [here](https://github.com/facebookresearch/segment-anything).
-
-For example:
-
 ```bash
+git clone https://github.com/<your-repo>/make-motion-trail-image.git
 cd make-motion-trail-image
-mkdir -p models
-curl -L https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth \
-  -o models/sam_vit_h_4b8939.pth
+uv sync
 ```
+
+The SAM 3 model checkpoint is automatically downloaded from HuggingFace on first run. A GPU with at least 8 GB VRAM is recommended.
 
 ## Usage
 
-Run the script with the required options:
-
 ```bash
-uv run main.py \
-  --input_images_dir <input_images_dir> \
-  --output_path <output_path> \
-  --model_path <model_path>
+uv run app.py
 ```
 
-For example, to process the sample images:
+Open http://127.0.0.1:7860 in your browser.
 
-```bash
-uv run main.py --input_images_dir data/samples/
-```
+### Workflow
 
-## Manual Mask Editing
+1. **Load frames** -- Enter the directory path containing your image sequence and click **Load**.
+2. **Annotate each frame** -- Use the frame slider to navigate between frames. For each frame:
+   - Select **Positive** mode and click on the object to segment (green dots).
+   - Select **Negative** mode and click on areas to exclude (red dots).
+   - The mask preview updates in real time after each click.
+   - Use **Undo** to remove the last point or **Clear** to reset the current frame.
+3. **Generate composite** -- Adjust the **Alpha** blending slider and click **Generate Motion Trail**. The result is saved to the specified output path.
 
-You can manually edit the mask images in the generated `data/masks` directory using any image editing tool. After editing, regenerate the final motion-trail image by running:
+### Preparing input images
 
-```bash
-uv run main.py \
-  --input_images_dir <input_images_dir> \
-  --output_path <output_path> \
-  --model_path <model_path> \
-  --masks_dir <masks_dir> \
-  --use_masks True
-```
+Place a sequence of images (`.png`, `.jpg`, `.jpeg`) in a directory. The images are sorted lexicographically, so use zero-padded filenames (e.g. `frame_001.png`, `frame_002.png`, ...) to ensure the correct order.
 
+## How it works
+
+1. For each frame, SAM 3's interactive predictor segments the target object based on positive/negative point prompts.
+2. A static background is estimated by computing the per-pixel median across all frames.
+3. The segmented objects are composited onto the background: the first and last frames are pasted opaquely, while intermediate frames are alpha-blended to create the motion-trail effect.
+
+## License
+
+See [LICENSE](LICENSE).
