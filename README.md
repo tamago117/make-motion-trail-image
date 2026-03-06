@@ -56,3 +56,4 @@ Place a sequence of images (`.png`, `.jpg`, `.jpeg`) in a directory. The images 
 ## License
 
 See [LICENSE](LICENSE).
+**NOTE**: This project depends on Segment Anything Model 3 (SAM3) released by Meta under the SAM License.
