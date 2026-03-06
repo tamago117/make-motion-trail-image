@@ -11,7 +11,7 @@ Click on each frame to select the object you want to extract, then generate a si
 ## Setup
 
 ```bash
-git clone https://github.com/<your-repo>/make-motion-trail-image.git
+git clone git@github.com:kohonda/make-motion-trail-image.git
 cd make-motion-trail-image
 uv sync
 ```
@@ -35,7 +35,7 @@ Open http://127.0.0.1:7860 in your browser.
 
 ### Workflow
 
-1. **Load frames** -- Enter the directory path containing your image sequence and click **Load**.
+1. **Load frames** -- Enter the directory path or click **Browse** to select a folder, then click **Load**.
 2. **Annotate each frame** -- Use the frame slider to navigate between frames. For each frame:
    - Select **Positive** mode and click on the object to segment (green dots).
    - Select **Negative** mode and click on areas to exclude (red dots).
