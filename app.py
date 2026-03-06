@@ -13,6 +13,8 @@ Workflow
 
 from __future__ import annotations
 
+import platform
+import subprocess
 from pathlib import Path
 from typing import List, Tuple
 
@@ -56,6 +58,59 @@ def _overlay_mask(
 # ---------------------------------------------------------------------------
 # Gradio callbacks
 # ---------------------------------------------------------------------------
+
+
+def _is_wsl() -> bool:
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
+
+def browse_dir():
+    """Open a native OS directory picker and return the selected path."""
+    system = platform.system()
+    if system == "Linux" and _is_wsl():
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
+                "$f.ShowDialog() | Out-Null;"
+                "$f.SelectedPath",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        path = result.stdout.strip()
+        if path:
+            wsl = subprocess.run(
+                ["wslpath", "-u", path],
+                capture_output=True,
+                text=True,
+            )
+            path = wsl.stdout.strip()
+    elif system == "Darwin":
+        result = subprocess.run(
+            ["osascript", "-e", "POSIX path of (choose folder)"],
+            capture_output=True,
+            text=True,
+        )
+        path = result.stdout.strip()
+    else:
+        result = subprocess.run(
+            [
+                "zenity",
+                "--file-selection",
+                "--directory",
+                "--title=Select directory",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        path = result.stdout.strip()
+    return path if path else gr.update()
 
 
 def load_dir(input_dir: str):
@@ -218,6 +273,7 @@ def build_ui() -> gr.Blocks:
             input_dir = gr.Textbox(
                 label="Input directory", value="data/samples/", scale=4
             )
+            browse_btn = gr.Button("Browse", scale=1)
             load_btn = gr.Button("Load", scale=1)
 
         # ---- images ----
@@ -253,6 +309,8 @@ def build_ui() -> gr.Blocks:
         result_image = gr.Image(label="Result", interactive=False)
 
         # ---- wiring ----
+        browse_btn.click(browse_dir, inputs=[], outputs=[input_dir])
+
         load_btn.click(
             load_dir,
             inputs=[input_dir],

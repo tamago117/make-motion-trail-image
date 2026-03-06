@@ -33,6 +33,14 @@ def load_images(folder: Path) -> Tuple[List[np.ndarray], List[Path]]:
     exts = {".png", ".jpg", ".jpeg"}
     paths = sorted(p for p in folder.iterdir() if p.suffix.lower() in exts)
     frames = [cv2.imread(str(p)) for p in paths]
+    if frames:
+        target_h, target_w = frames[0].shape[:2]
+        frames = [
+            cv2.resize(f, (target_w, target_h), interpolation=cv2.INTER_AREA)
+            if f.shape[:2] != (target_h, target_w)
+            else f
+            for f in frames
+        ]
     return frames, paths
 
 

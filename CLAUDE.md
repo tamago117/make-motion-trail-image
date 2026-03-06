@@ -37,9 +37,9 @@ The application is split into two modules:
 
 Key data flow: frames are stored in both RGB (for display/SAM) and BGR (for OpenCV compositing). Per-frame point prompts are stored in `st_points_map` as `dict[int, list[(x, y, label)]]`. Masks are stored in `st_masks` as `list[np.ndarray | None]`.
 
-## Linting
+## Linting and Formatting
 
-Ruff is used for both linting and formatting. Pre-commit hooks run `ruff-check --fix --extend-select=I` (with isort) and `ruff-format`. No additional ruff configuration exists in `pyproject.toml` — defaults are used.
+You DO NOT need to run any formatting or linting commands manually. The pre-commit hooks will automatically check and format code on commit.
 
 ## Requirements
 
