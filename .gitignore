@@ -183,3 +183,5 @@ data/*
 
 outputs/*
 models/*
+
+.claude/

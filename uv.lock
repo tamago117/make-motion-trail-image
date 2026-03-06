@@ -760,22 +760,22 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "decord" },
-    { name = "einops" },
-    { name = "gradio" },
-    { name = "hydra-core" },
-    { name = "matplotlib" },
-    { name = "omegaconf" },
-    { name = "open-clip-torch" },
+    { name = "decord", specifier = ">=0.6.0" },
+    { name = "einops", specifier = ">=0.8.0" },
+    { name = "gradio", specifier = ">=6.0.0" },
+    { name = "hydra-core", specifier = ">=1.3.0" },
+    { name = "matplotlib", specifier = ">=3.10.0" },
+    { name = "omegaconf", specifier = ">=2.3.0" },
+    { name = "open-clip-torch", specifier = ">=3.3.0" },
     { name = "opencv-python", specifier = ">=4.11.0.86" },
-    { name = "psutil" },
-    { name = "pycocotools" },
+    { name = "psutil", specifier = ">=7.0.0" },
+    { name = "pycocotools", specifier = ">=2.0.0" },
     { name = "sam3", git = "https://github.com/facebookresearch/sam3.git" },
-    { name = "scikit-image" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "submitit" },
-    { name = "torchmetrics" },
+    { name = "scikit-image", specifier = ">=0.26.0" },
+    { name = "scikit-learn", specifier = ">=1.8.0" },
+    { name = "scipy", specifier = ">=1.17.0" },
+    { name = "submitit", specifier = ">=1.5.0" },
+    { name = "torchmetrics", specifier = ">=1.8.0" },
 ]
 
 [package.metadata.requires-dev]

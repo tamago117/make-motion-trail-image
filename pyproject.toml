@@ -5,22 +5,22 @@ description = "Make motion trail image using Segment Anything Model 3."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "decord",
-    "einops",
-    "hydra-core",
-    "matplotlib",
-    "omegaconf",
-    "open-clip-torch",
+    "decord>=0.6.0",
+    "einops>=0.8.0",
+    "hydra-core>=1.3.0",
+    "matplotlib>=3.10.0",
+    "omegaconf>=2.3.0",
+    "open-clip-torch>=3.3.0",
     "opencv-python>=4.11.0.86",
-    "gradio",
-    "psutil",
-    "pycocotools",
+    "gradio>=6.0.0",
+    "psutil>=7.0.0",
+    "pycocotools>=2.0.0",
     "sam3",
-    "scikit-image",
-    "scikit-learn",
-    "scipy",
-    "submitit",
-    "torchmetrics",
+    "scikit-image>=0.26.0",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.0",
+    "submitit>=1.5.0",
+    "torchmetrics>=1.8.0",
 ]
 
 [tool.uv.sources]

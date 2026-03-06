@@ -18,6 +18,13 @@ uv sync
 
 The SAM 3 model checkpoint is automatically downloaded from HuggingFace on first run. A GPU with at least 8 GB VRAM is recommended.
 
+> **Note:** The SAM 3 model weights are hosted on a gated HuggingFace repo. Once accepted, you need to be authenticated to download the checkpoints. You can do this by running the following steps:
+>
+> 1. Create or log in to your [Hugging Face](https://huggingface.co/) account.
+> 2. Go to the SAM 3 model page and accept the license agreement.
+> 3. Generate an access token at [Hugging Face Settings](https://huggingface.co/settings/tokens).
+> 4. Run `huggingface-cli login` and paste your token when prompted.
+
 ## Usage
 
 ```bash
