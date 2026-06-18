@@ -54,20 +54,117 @@ def overlay_object_on_background(
     background: np.ndarray,
     object_layers: List[Tuple[np.ndarray, np.ndarray]],
     alpha: float = 0.5,
+    last_opaque: bool = True,
+    opaque_indices: set | None = None,
 ) -> np.ndarray:
-    """Compose the final image from background + object layers."""
+    """Compose the final image from background + object layers.
+
+    Layers are alpha-blended onto the running output so the motion trail fades,
+    except those whose index is in *opaque_indices*, which are painted opaque
+    (the object's "position" rendered solid). When *opaque_indices* is None it is
+    derived from *last_opaque*: ``{len-1}`` if True (the final frame, as before),
+    else empty — so existing single-set behaviour is unchanged.
+    """
+    if opaque_indices is None:
+        opaque_indices = {len(object_layers) - 1} if last_opaque else set()
     output = background.copy()
     for idx, (frame, mask) in enumerate(object_layers):
         m = mask.astype(bool)
         if m.sum() == 0:
             continue
-        if idx == len(object_layers) - 1:
+        if idx in opaque_indices:
             output[m] = frame[m]
         else:
             output[m] = (
                 (1 - alpha) * output[m].astype(np.float32)
                 + alpha * frame[m].astype(np.float32)
             ).astype(np.uint8)
+    return output
+
+
+def tint(
+    frame_bgr: np.ndarray,
+    mask: np.ndarray,
+    color_bgr: Tuple[int, int, int],
+    strength: float = 0.5,
+) -> np.ndarray:
+    """Blend the masked object pixels toward *color_bgr*.
+
+    ``strength=0`` keeps the original object colours, ``strength=1`` turns the
+    object into a flat colour silhouette. Operates in BGR (compositing space).
+    """
+    out = frame_bgr.copy()
+    m = mask.astype(bool)
+    if m.sum() == 0:
+        return out
+    color = np.array(color_bgr, dtype=np.float32)
+    out[m] = (
+        (1 - strength) * frame_bgr[m].astype(np.float32) + strength * color
+    ).astype(np.uint8)
+    return out
+
+
+def resize_to_canvas(
+    frame_bgr: np.ndarray,
+    mask: np.ndarray | None,
+    size: Tuple[int, int],
+) -> Tuple[np.ndarray, np.ndarray | None]:
+    """Resize a frame (and its mask) to the shared canvas *size* = (H, W).
+
+    Frames use INTER_AREA; masks use INTER_NEAREST to stay binary. Lets sets of
+    differing dimensions be composited onto one common canvas.
+    """
+    h, w = size
+    if frame_bgr.shape[:2] != (h, w):
+        frame_bgr = cv2.resize(frame_bgr, (w, h), interpolation=cv2.INTER_AREA)
+    if mask is not None and mask.shape[:2] != (h, w):
+        mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+    return frame_bgr, mask
+
+
+def compose_multi_set(
+    sets: List[dict],
+    background_bgr: np.ndarray,
+    alpha: float = 0.5,
+    tint_strength: float = 0.5,
+    emphasis: str = "last",
+) -> np.ndarray:
+    """Overlay several colored motion trails onto one chosen background.
+
+    *sets* is a list of dicts, each with ``frames_bgr`` (list), ``masks`` (list
+    aligned with frames, entries may be None) and ``color_bgr`` ((B, G, R) or
+    None to skip tinting and keep the object's original colours). Each set is
+    tinted with its colour and layered onto the running output in order, so
+    overlapping sets blend where their masks meet.
+
+    *emphasis* selects which frames of each set are painted opaque (the rest
+    fade via *alpha*): ``"none"`` (all blended), ``"last"`` (final frame, the
+    default) or ``"first_last"`` (first and final frames).
+    """
+    size = background_bgr.shape[:2]
+    output = background_bgr.copy()
+    for s in sets:
+        layers: List[Tuple[np.ndarray, np.ndarray]] = []
+        for frame, mask in zip(s["frames_bgr"], s["masks"]):
+            if mask is None:
+                continue
+            frame, mask = resize_to_canvas(frame, mask, size)
+            color = s.get("color_bgr")
+            if color is not None:
+                frame = tint(frame, mask, color, tint_strength)
+            layers.append((frame, mask))
+        if not layers:
+            continue
+        n = len(layers)
+        if emphasis == "none":
+            opaque = set()
+        elif emphasis == "first_last":
+            opaque = {0, n - 1}
+        else:  # "last"
+            opaque = {n - 1}
+        output = overlay_object_on_background(
+            output, layers, alpha, opaque_indices=opaque
+        )
     return output
 
 
