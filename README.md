@@ -35,7 +35,7 @@ Open http://127.0.0.1:7860 in your browser.
 
 ### Workflow
 
-1. **Load frames** -- Enter the directory path or click **Browse** to select a folder, then click **Load**.
+1. **Load frames** -- Enter a path and click **Load**. You can load either a folder of images (**Image Directory**) or a video file (**Movie File**). For a video, set the **Start** / **End** time and the sampling **Interval (sec)** — one frame is extracted every interval seconds across the chosen range (default `1.0`). Times accept plain seconds (`12.5`), `mm:ss` (`1:23.5`) or `hh:mm:ss` (`1:02:03`); set **End** to `0` to use the whole clip.
 2. **Annotate each frame** -- Use the frame slider to navigate between frames. For each frame:
    - Select **Positive** mode and click on the object to segment (green dots).
    - Select **Negative** mode and click on areas to exclude (red dots).
@@ -43,9 +43,12 @@ Open http://127.0.0.1:7860 in your browser.
    - Use **Undo** to remove the last point or **Clear** to reset the current frame.
 3. **Generate composite** -- Adjust the **Alpha** blending slider and click **Generate Motion Trail**. The result is saved to the specified output path.
 
-### Preparing input images
+### Preparing input
 
-Place a sequence of images (`.png`, `.jpg`, `.jpeg`) in a directory. The images are sorted lexicographically, so use zero-padded filenames (e.g. `frame_001.png`, `frame_002.png`, ...) to ensure the correct order.
+You can supply frames in two ways:
+
+- **Image folder** -- Place a sequence of images (`.png`, `.jpg`, `.jpeg`) in a directory. The images are sorted lexicographically, so use zero-padded filenames (e.g. `frame_001.png`, `frame_002.png`, ...) to ensure the correct order.
+- **Video file** -- Point to a video (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`). One frame is extracted every **Interval (sec)** seconds across the **Start** / **End** range. The **Start** / **End** fields accept plain seconds (`12.5`), `mm:ss` (`1:23.5`) or `hh:mm:ss` (`1:02:03`).
 
 ## How it works
 

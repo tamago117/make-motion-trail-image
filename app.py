@@ -15,9 +15,11 @@ Workflow
 
 from __future__ import annotations
 
+import hashlib
 import platform
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import cv2
@@ -25,8 +27,10 @@ import gradio as gr
 import numpy as np
 
 from core import (
+    VIDEO_EXTS,
     compose_multi_set,
     load_images,
+    load_video,
     run_predictor_on_frame,
 )
 
@@ -161,19 +165,44 @@ def _is_wsl() -> bool:
         return False
 
 
-def browse_dir():
-    """Open a native OS directory picker and return the selected path."""
+def _parse_time(value) -> float:
+    """Parse a time spec to seconds.
+
+    Accepts plain seconds (``"12.5"``), ``"m:s"`` (``"1:23.5"`` -> 83.5) and
+    ``"h:m:s"`` (``"1:02:03"`` -> 3723), all with optional decimals. Blank or
+    unparseable input returns ``0.0``.
+    """
+    if value is None:
+        return 0.0
+    s = str(value).strip()
+    if not s:
+        return 0.0
+    try:
+        parts = [float(p) for p in s.split(":")]
+    except ValueError:
+        gr.Warning(f"Invalid time: {value}")
+        return 0.0
+    total = 0.0
+    for p in parts:  # left-to-right: each field is 60× the next (h, m, s)
+        total = total * 60 + p
+    return max(total, 0.0)
+
+
+def _native_picker(pick_file: bool):
+    """Open a native OS picker for a directory (or a file) and return the path."""
     system = platform.system()
     if system == "Linux" and _is_wsl():
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$f = New-Object System.Windows.Forms.OpenFileDialog;"
+            "$f.ShowDialog() | Out-Null;$f.FileName"
+            if pick_file
+            else "Add-Type -AssemblyName System.Windows.Forms;"
+            "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
+            "$f.ShowDialog() | Out-Null;$f.SelectedPath"
+        )
         result = subprocess.run(
-            [
-                "powershell.exe",
-                "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms;"
-                "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
-                "$f.ShowDialog() | Out-Null;"
-                "$f.SelectedPath",
-            ],
+            ["powershell.exe", "-Command", ps],
             capture_output=True,
             text=True,
         )
@@ -186,25 +215,96 @@ def browse_dir():
             )
             path = wsl.stdout.strip()
     elif system == "Darwin":
+        script = "POSIX path of (choose file)" if pick_file else (
+            "POSIX path of (choose folder)"
+        )
         result = subprocess.run(
-            ["osascript", "-e", "POSIX path of (choose folder)"],
+            ["osascript", "-e", script],
             capture_output=True,
             text=True,
         )
         path = result.stdout.strip()
     else:
-        result = subprocess.run(
+        cmd = ["zenity", "--file-selection", "--title=Select"]
+        if not pick_file:
+            cmd.append("--directory")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        path = result.stdout.strip()
+    return path if path else gr.update()
+
+
+def browse_dir():
+    """Open a native OS directory picker and return the selected path."""
+    return _native_picker(pick_file=False)
+
+
+# Codecs browsers can play directly, so no transcode is needed.
+_BROWSER_CODECS = {"h264", "avc1", "vp8", "vp9", "av1"}
+
+
+def _playable_video(path: str):
+    """Return a browser-playable version of *path* for the gr.Video widget.
+
+    Browser-compatible files are served as-is. Others (e.g. mpeg4) are
+    transcoded to H.264 mp4 in the system temp dir, so Gradio doesn't try to
+    convert them in place (which fails when the source dir isn't writable).
+    Returns the path string, or ``gr.update()`` if it can't be prepared.
+    """
+    src = Path(path)
+    if not src.is_file():
+        return gr.update()
+
+    codec = ""
+    try:
+        probe = subprocess.run(
             [
-                "zenity",
-                "--file-selection",
-                "--directory",
-                "--title=Select directory",
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(src),
             ],
             capture_output=True,
             text=True,
         )
-        path = result.stdout.strip()
-    return path if path else gr.update()
+        codec = probe.stdout.strip()
+    except OSError:
+        pass
+
+    if codec in _BROWSER_CODECS and src.suffix.lower() in {".mp4", ".webm"}:
+        return str(src)
+
+    out_dir = Path(tempfile.gettempdir()) / "motion_trail_preview"
+    out_dir.mkdir(exist_ok=True)
+    # Key the cache on the absolute path + mtime + size so different videos that
+    # happen to share a filename (e.g. several "overhead.mp4") never collide.
+    stat = src.stat()
+    key = hashlib.md5(
+        f"{src.resolve()}:{stat.st_mtime_ns}:{stat.st_size}".encode()
+    ).hexdigest()
+    out = out_dir / f"{key}.mp4"
+    if out.is_file():
+        return str(out)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-movflags", "+faststart", str(out),
+            ],
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        gr.Warning("Could not prepare the video for in-browser playback")
+        return gr.update()
+    return str(out)
+
+
+def browse_file():
+    """Open a file picker; return the path for both the textbox and the player."""
+    path = _native_picker(pick_file=True)
+    if isinstance(path, str):
+        # textbox gets the real path; the player gets a browser-playable copy
+        return path, _playable_video(path)
+    return gr.update(), gr.update()  # cancelled: leave both unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -325,17 +425,36 @@ def set_background(sets: list, active: int, idx: int):
 # ---------------------------------------------------------------------------
 
 
-def load_dir(input_dir: str, sets: list, active: int):
-    """Load images from *input_dir* into the active set."""
+def load_source(
+    input_dir: str,
+    sets: list,
+    active: int,
+    start_sec: str,
+    end_sec: str,
+    interval_sec: float,
+):
+    """Load frames from *input_dir* (a folder of images or a video) into the set."""
     p = Path(input_dir)
-    if not p.is_dir():
-        gr.Warning(f"Not a directory: {input_dir}")
-        return None, None, gr.update(), 0, sets
-
-    frames_bgr, _ = load_images(p)
-    if not frames_bgr:
-        gr.Warning("No images found in directory")
-        return None, None, gr.update(), 0, sets
+    video_out = None  # path to feed the playback widget (None clears it)
+    if p.is_dir():
+        frames_bgr, _ = load_images(p)
+        if not frames_bgr:
+            gr.Warning("No images found in directory")
+            return None, None, gr.update(), 0, sets, gr.update()
+    elif p.is_file() and p.suffix.lower() in VIDEO_EXTS:
+        frames_bgr = load_video(
+            p,
+            _parse_time(start_sec),
+            _parse_time(end_sec),
+            float(interval_sec or 1.0),
+        )
+        if not frames_bgr:
+            gr.Warning("Could not read frames from video")
+            return None, None, gr.update(), 0, sets, gr.update()
+        video_out = _playable_video(str(p))
+    else:
+        gr.Warning(f"Not a directory or supported video file: {input_dir}")
+        return None, None, gr.update(), 0, sets, gr.update()
 
     frames_rgb = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames_bgr]
 
@@ -356,6 +475,7 @@ def load_dir(input_dir: str, sets: list, active: int):
         gr.update(maximum=max(len(frames_rgb) - 1, 0), value=0),  # frame_slider
         0,  # st_idx
         sets,  # st_sets
+        video_out,  # video_player (path for a movie, None for an image folder)
     )
 
 
@@ -494,7 +614,12 @@ def generate_composite(
 
 
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="Motion Trail – SAM 3") as demo:
+    css = (
+        "#browse-or{flex:0 0 auto !important;min-width:0 !important;"
+        "display:flex;align-items:center;justify-content:center;}"
+        "#browse-or p{margin:0;}"
+    )
+    with gr.Blocks(title="Motion Trail – SAM 3", css=css) as demo:
         gr.Markdown("# Motion Trail Image Creator (SAM 3)")
         gr.Markdown(
             "Load a folder per set, annotate each set, give it a colour, "
@@ -520,12 +645,34 @@ def build_ui() -> gr.Blocks:
         # ---- load ----
         with gr.Row():
             input_dir = gr.Textbox(
-                label="Input directory (active set)",
+                label="Input directory or video file (active set)",
                 value="data/samples/",
                 scale=4,
             )
-            browse_btn = gr.Button("Browse", scale=1)
+            browse_btn = gr.Button("Image Directory", scale=1)
+            gr.Markdown("or", elem_id="browse-or")
+            browse_file_btn = gr.Button("Movie File", scale=1)
             load_btn = gr.Button("Load", scale=1)
+
+        with gr.Row():
+            start_sec = gr.Textbox(
+                label="Start (video)",
+                value="0",
+                placeholder="sec or mm:ss.s, e.g. 1:23.5",
+            )
+            end_sec = gr.Textbox(
+                label="End (0 = until end)",
+                value="0",
+                placeholder="sec or mm:ss.s, e.g. 2:05",
+            )
+            interval_sec = gr.Number(
+                label="Interval (sec, video)",
+                value=1.0,
+                minimum=0.01,
+            )
+
+        # Raw playback to review the movie and pick the start / end interval.
+        video_player = gr.Video(label="Movie preview", interactive=False)
 
         with gr.Row():
             color_picker = gr.ColorPicker(
@@ -645,16 +792,20 @@ def build_ui() -> gr.Blocks:
         )
 
         browse_btn.click(browse_dir, inputs=[], outputs=[input_dir])
+        browse_file_btn.click(
+            browse_file, inputs=[], outputs=[input_dir, video_player]
+        )
 
         load_btn.click(
-            load_dir,
-            inputs=[input_dir, st_sets, st_active],
+            load_source,
+            inputs=[input_dir, st_sets, st_active, start_sec, end_sec, interval_sec],
             outputs=[
                 input_image,
                 preview_image,
                 frame_slider,
                 st_idx,
                 st_sets,
+                video_player,
             ],
         )
 
@@ -706,4 +857,6 @@ def build_ui() -> gr.Blocks:
 
 if __name__ == "__main__":
     demo = build_ui()
-    demo.launch()
+    # Allow the movie-preview widget to serve videos the user browses to from
+    # anywhere on the machine (this is a local, single-user tool on 127.0.0.1).
+    demo.launch(allowed_paths=["/"])
