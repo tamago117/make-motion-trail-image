@@ -16,7 +16,6 @@ Workflow
 from __future__ import annotations
 
 import hashlib
-import platform
 import re
 import subprocess
 import tempfile
@@ -29,7 +28,6 @@ import numpy as np
 from core import (
     VIDEO_EXTS,
     compose_multi_set,
-    load_images,
     load_video,
     run_predictor_on_frame,
 )
@@ -154,15 +152,8 @@ def _current_views(frames, points_map, idx, masks):
 
 
 # ---------------------------------------------------------------------------
-# Directory browser
+# Input helpers
 # ---------------------------------------------------------------------------
-
-
-def _is_wsl() -> bool:
-    try:
-        return "microsoft" in Path("/proc/version").read_text().lower()
-    except OSError:
-        return False
 
 
 def _parse_time(value) -> float:
@@ -186,56 +177,6 @@ def _parse_time(value) -> float:
     for p in parts:  # left-to-right: each field is 60× the next (h, m, s)
         total = total * 60 + p
     return max(total, 0.0)
-
-
-def _native_picker(pick_file: bool):
-    """Open a native OS picker for a directory (or a file) and return the path."""
-    system = platform.system()
-    if system == "Linux" and _is_wsl():
-        ps = (
-            "Add-Type -AssemblyName System.Windows.Forms;"
-            "$f = New-Object System.Windows.Forms.OpenFileDialog;"
-            "$f.ShowDialog() | Out-Null;$f.FileName"
-            if pick_file
-            else "Add-Type -AssemblyName System.Windows.Forms;"
-            "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
-            "$f.ShowDialog() | Out-Null;$f.SelectedPath"
-        )
-        result = subprocess.run(
-            ["powershell.exe", "-Command", ps],
-            capture_output=True,
-            text=True,
-        )
-        path = result.stdout.strip()
-        if path:
-            wsl = subprocess.run(
-                ["wslpath", "-u", path],
-                capture_output=True,
-                text=True,
-            )
-            path = wsl.stdout.strip()
-    elif system == "Darwin":
-        script = "POSIX path of (choose file)" if pick_file else (
-            "POSIX path of (choose folder)"
-        )
-        result = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-        )
-        path = result.stdout.strip()
-    else:
-        cmd = ["zenity", "--file-selection", "--title=Select"]
-        if not pick_file:
-            cmd.append("--directory")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        path = result.stdout.strip()
-    return path if path else gr.update()
-
-
-def browse_dir():
-    """Open a native OS directory picker and return the selected path."""
-    return _native_picker(pick_file=False)
 
 
 # Codecs browsers can play directly, so no transcode is needed.
@@ -298,15 +239,6 @@ def _playable_video(path: str):
     return str(out)
 
 
-def browse_file():
-    """Open a file picker; return the path for both the textbox and the player."""
-    path = _native_picker(pick_file=True)
-    if isinstance(path, str):
-        # textbox gets the real path; the player gets a browser-playable copy
-        return path, _playable_video(path)
-    return gr.update(), gr.update()  # cancelled: leave both unchanged
-
-
 # ---------------------------------------------------------------------------
 # Set management callbacks
 # ---------------------------------------------------------------------------
@@ -327,7 +259,6 @@ def add_set(sets: list):
         gr.update(maximum=0, value=0),  # frame_slider
         _rgb_to_hex(color),  # color_picker
         False,  # no_color_checkbox
-        gr.update(value=""),  # input_dir
     )
 
 
@@ -360,7 +291,6 @@ def remove_set(sets: list, active: int):
         slider,
         _picker_hex(s["color"], active),
         s["color"] is None,
-        gr.update(value=s["dir"]),
     )
 
 
@@ -382,7 +312,6 @@ def select_set(sets: list, label):
         slider,  # frame_slider
         _picker_hex(s["color"], active),  # color_picker
         s["color"] is None,  # no_color_checkbox
-        gr.update(value=s["dir"]),  # input_dir
     )
 
 
@@ -425,44 +354,21 @@ def set_background(sets: list, active: int, idx: int):
 # ---------------------------------------------------------------------------
 
 
-def load_source(
-    input_dir: str,
+def _ingest_frames(
+    frames_bgr: list,
     sets: list,
     active: int,
-    start_sec: str,
-    end_sec: str,
-    interval_sec: float,
+    source_label: str,
+    video_out,
 ):
-    """Load frames from *input_dir* (a folder of images or a video) into the set."""
-    p = Path(input_dir)
-    video_out = None  # path to feed the playback widget (None clears it)
-    if p.is_dir():
-        frames_bgr, _ = load_images(p)
-        if not frames_bgr:
-            gr.Warning("No images found in directory")
-            return None, None, gr.update(), 0, sets, gr.update()
-    elif p.is_file() and p.suffix.lower() in VIDEO_EXTS:
-        frames_bgr = load_video(
-            p,
-            _parse_time(start_sec),
-            _parse_time(end_sec),
-            float(interval_sec or 1.0),
-        )
-        if not frames_bgr:
-            gr.Warning("Could not read frames from video")
-            return None, None, gr.update(), 0, sets, gr.update()
-        video_out = _playable_video(str(p))
-    else:
-        gr.Warning(f"Not a directory or supported video file: {input_dir}")
-        return None, None, gr.update(), 0, sets, gr.update()
-
+    """Store *frames_bgr* into the active set and return the standard outputs."""
     frames_rgb = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames_bgr]
 
     if not sets:
         sets = [_new_set(_next_color(0))]
         active = 0
     s = sets[active]
-    s["dir"] = input_dir
+    s["dir"] = source_label
     s["frames"] = frames_rgb
     s["frames_bgr"] = frames_bgr
     s["points_map"] = {}
@@ -477,6 +383,74 @@ def load_source(
         sets,  # st_sets
         video_out,  # video_player (path for a movie, None for an image folder)
     )
+
+
+def load_video_frames(
+    video_path: str,
+    sets: list,
+    active: int,
+    start_sec: str,
+    end_sec: str,
+    interval_sec: float,
+):
+    """Extract frames from the dropped video into the active set."""
+    if not video_path:
+        gr.Warning("Drop a video onto the player first")
+        return None, None, gr.update(), 0, sets, gr.update()
+    p = Path(video_path)
+    if not (p.is_file() and p.suffix.lower() in VIDEO_EXTS):
+        gr.Warning(f"Not a supported video file: {video_path}")
+        return None, None, gr.update(), 0, sets, gr.update()
+    frames_bgr = load_video(
+        p,
+        _parse_time(start_sec),
+        _parse_time(end_sec),
+        float(interval_sec or 1.0),
+    )
+    if not frames_bgr:
+        gr.Warning("Could not read frames from video")
+        return None, None, gr.update(), 0, sets, gr.update()
+    # The player already shows the dropped video, so leave it untouched.
+    return _ingest_frames(frames_bgr, sets, active, str(p), gr.update())
+
+
+def load_image_files(files: list, sets: list, active: int):
+    """Load dropped image files (e.g. a folder) into the active set."""
+    if not files:
+        return None, None, gr.update(), 0, sets, gr.update()
+    exts = {".png", ".jpg", ".jpeg"}
+    paths = sorted(
+        (Path(f) for f in files if Path(f).suffix.lower() in exts),
+        key=lambda q: q.name,
+    )
+    frames = [cv2.imread(str(q)) for q in paths]
+    frames = [f for f in frames if f is not None]
+    if not frames:
+        gr.Warning("No images (.png/.jpg/.jpeg) found in the dropped folder")
+        return None, None, gr.update(), 0, sets, gr.update()
+    h, w = frames[0].shape[:2]
+    frames = [
+        cv2.resize(f, (w, h), interpolation=cv2.INTER_AREA)
+        if f.shape[:2] != (h, w)
+        else f
+        for f in frames
+    ]
+    return _ingest_frames(frames, sets, active, "(dropped folder)", None)
+
+
+def on_video_drop(video_path):
+    """Handle a dropped video.
+
+    The original path is stored (cv2 reads any codec for frame extraction) and
+    the read-only preview gets a browser-playable copy, so a source codec like
+    mpeg4 is never handed to the player as-is (which shows "not playable").
+    """
+    if not video_path:
+        return None, None
+    if Path(video_path).suffix.lower() not in VIDEO_EXTS:
+        gr.Warning(f"Not a supported video file: {video_path}")
+        return None, None
+    return video_path, _playable_video(video_path)
 
 
 def on_image_click(
@@ -613,13 +587,16 @@ def generate_composite(
 # ---------------------------------------------------------------------------
 
 
+# Centre the small "or" label between the two browse buttons (passed to launch).
+UI_CSS = (
+    "#browse-or{flex:0 0 auto !important;min-width:0 !important;"
+    "display:flex;align-items:center;justify-content:center;}"
+    "#browse-or p{margin:0;}"
+)
+
+
 def build_ui() -> gr.Blocks:
-    css = (
-        "#browse-or{flex:0 0 auto !important;min-width:0 !important;"
-        "display:flex;align-items:center;justify-content:center;}"
-        "#browse-or p{margin:0;}"
-    )
-    with gr.Blocks(title="Motion Trail – SAM 3", css=css) as demo:
+    with gr.Blocks(title="Motion Trail – SAM 3") as demo:
         gr.Markdown("# Motion Trail Image Creator (SAM 3)")
         gr.Markdown(
             "Load a folder per set, annotate each set, give it a colour, "
@@ -633,6 +610,7 @@ def build_ui() -> gr.Blocks:
         st_active = gr.State(0)  # active set index
         st_idx = gr.State(0)  # current frame within active set
         st_bg = gr.State(None)  # chosen background frame (BGR)
+        st_video = gr.State(None)  # original path of the dropped video
 
         # ---- set management ----
         with gr.Row():
@@ -642,17 +620,28 @@ def build_ui() -> gr.Blocks:
             add_btn = gr.Button("+ Add Set", scale=1)
             remove_btn = gr.Button("Remove Set", scale=1)
 
-        # ---- load ----
-        with gr.Row():
-            input_dir = gr.Textbox(
-                label="Input directory or video file (active set)",
-                value="data/samples/",
-                scale=4,
-            )
-            browse_btn = gr.Button("Image Directory", scale=1)
-            gr.Markdown("or", elem_id="browse-or")
-            browse_file_btn = gr.Button("Movie File", scale=1)
-            load_btn = gr.Button("Load", scale=1)
+        # ---- load (drag & drop) ----
+        gr.Markdown(
+            "**Load frames into the active set** — drop an image folder to load "
+            "it immediately, or drop a video below, set the options and click "
+            "**Extract frames from video**."
+        )
+
+        image_drop = gr.File(
+            label="Drop an image folder here",
+            file_count="directory",
+            height=120,
+        )
+
+        # Drop target (a plain file box never tries to play the raw codec) and a
+        # separate, read-only preview that shows the browser-playable version.
+        video_drop = gr.File(
+            label="Drop a video here",
+            file_count="single",
+            file_types=sorted(VIDEO_EXTS),
+            height=120,
+        )
+        video_player = gr.Video(label="Video preview", interactive=False)
 
         with gr.Row():
             start_sec = gr.Textbox(
@@ -670,9 +659,7 @@ def build_ui() -> gr.Blocks:
                 value=1.0,
                 minimum=0.01,
             )
-
-        # Raw playback to review the movie and pick the start / end interval.
-        video_player = gr.Video(label="Movie preview", interactive=False)
+            extract_btn = gr.Button("Extract frames from video", scale=1)
 
         with gr.Row():
             color_picker = gr.ColorPicker(
@@ -741,7 +728,6 @@ def build_ui() -> gr.Blocks:
                 frame_slider,
                 color_picker,
                 no_color_checkbox,
-                input_dir,
             ],
         )
 
@@ -758,7 +744,6 @@ def build_ui() -> gr.Blocks:
                 frame_slider,
                 color_picker,
                 no_color_checkbox,
-                input_dir,
             ],
         )
 
@@ -775,7 +760,6 @@ def build_ui() -> gr.Blocks:
                 frame_slider,
                 color_picker,
                 no_color_checkbox,
-                input_dir,
             ],
         )
 
@@ -791,14 +775,31 @@ def build_ui() -> gr.Blocks:
             outputs=[st_sets],
         )
 
-        browse_btn.click(browse_dir, inputs=[], outputs=[input_dir])
-        browse_file_btn.click(
-            browse_file, inputs=[], outputs=[input_dir, video_player]
+        # Drag & drop: an image folder loads immediately; a dropped video is
+        # stored (and shown playable), then Extract pulls frames from it using
+        # the time / interval settings.
+        image_drop.upload(
+            load_image_files,
+            inputs=[image_drop, st_sets, st_active],
+            outputs=[
+                input_image,
+                preview_image,
+                frame_slider,
+                st_idx,
+                st_sets,
+                video_player,
+            ],
         )
 
-        load_btn.click(
-            load_source,
-            inputs=[input_dir, st_sets, st_active, start_sec, end_sec, interval_sec],
+        video_drop.upload(
+            on_video_drop,
+            inputs=[video_drop],
+            outputs=[st_video, video_player],
+        )
+
+        extract_btn.click(
+            load_video_frames,
+            inputs=[st_video, st_sets, st_active, start_sec, end_sec, interval_sec],
             outputs=[
                 input_image,
                 preview_image,
@@ -859,4 +860,4 @@ if __name__ == "__main__":
     demo = build_ui()
     # Allow the movie-preview widget to serve videos the user browses to from
     # anywhere on the machine (this is a local, single-user tool on 127.0.0.1).
-    demo.launch(allowed_paths=["/"])
+    demo.launch(allowed_paths=["/"], css=UI_CSS)

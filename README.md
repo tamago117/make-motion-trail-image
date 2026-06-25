@@ -35,7 +35,9 @@ Open http://127.0.0.1:7860 in your browser.
 
 ### Workflow
 
-1. **Load frames** -- Enter a path and click **Load**. You can load either a folder of images (**Image Directory**) or a video file (**Movie File**). For a video, set the **Start** / **End** time and the sampling **Interval (sec)** — one frame is extracted every interval seconds across the chosen range (default `1.0`). Times accept plain seconds (`12.5`), `mm:ss` (`1:23.5`) or `hh:mm:ss` (`1:02:03`); set **End** to `0` to use the whole clip.
+1. **Load frames** -- Frames are loaded by drag & drop into the active set:
+   - **Image folder** -- Drop a folder onto the image drop zone; its images load immediately.
+   - **Video** -- Drop a video onto the **Drop a video here** box (a browser-playable preview appears below it), set the **Start** / **End** time and sampling **Interval (sec)**, then click **Extract frames from video**. One frame is extracted every interval seconds across the chosen range (default `1.0`). Times accept plain seconds (`12.5`), `mm:ss` (`1:23.5`) or `hh:mm:ss` (`1:02:03`); set **End** to `0` to use the whole clip.
 2. **Annotate each frame** -- Use the frame slider to navigate between frames. For each frame:
    - Select **Positive** mode and click on the object to segment (green dots).
    - Select **Negative** mode and click on areas to exclude (red dots).
@@ -45,10 +47,12 @@ Open http://127.0.0.1:7860 in your browser.
 
 ### Preparing input
 
-You can supply frames in two ways:
+You can supply frames in two ways, both via drag & drop:
 
-- **Image folder** -- Place a sequence of images (`.png`, `.jpg`, `.jpeg`) in a directory. The images are sorted lexicographically, so use zero-padded filenames (e.g. `frame_001.png`, `frame_002.png`, ...) to ensure the correct order.
-- **Video file** -- Point to a video (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`). One frame is extracted every **Interval (sec)** seconds across the **Start** / **End** range. The **Start** / **End** fields accept plain seconds (`12.5`), `mm:ss` (`1:23.5`) or `hh:mm:ss` (`1:02:03`).
+- **Image folder** -- A folder of images (`.png`, `.jpg`, `.jpeg`). The images are sorted by filename, so use zero-padded names (e.g. `frame_001.png`, `frame_002.png`, ...) to ensure the correct order.
+- **Video file** -- A video (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`). One frame is extracted every **Interval (sec)** seconds across the **Start** / **End** range. The **Start** / **End** fields accept plain seconds (`12.5`), `mm:ss` (`1:23.5`) or `hh:mm:ss` (`1:02:03`).
+
+> **Note:** Drag & drop uploads the files into the app's working area, so very large videos may take a moment to transfer.
 
 ## How it works
 
