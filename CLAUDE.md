@@ -36,6 +36,8 @@ The application is split into two modules:
   2. **Gradio callbacks** — manage per-frame state (points, masks) via `gr.State` objects keyed by frame index. Handle click-to-annotate, undo/clear, frame navigation, composite generation, and session save/restore.
   3. **UI builder** (`build_ui`) — constructs the Gradio Blocks layout and wires up callbacks.
 
+Output format: the composite's format comes from the output path's extension (`_resolve_output_path` validates it, falling back to PNG — `cv2.imwrite` *raises* on an extension it can't encode). `generate_composite` returns the written file's path, not an array, because `gr.Image` re-encodes arrays to its `format=` (webp by default in Gradio 6), which would ignore the chosen format on download.
+
 Key data flow: frames are stored in both RGB (for display/SAM) and BGR (for OpenCV compositing). Per-frame point prompts are stored in `st_points_map` as `dict[int, list[(x, y, label)]]` — the keys are ints, so anything round-tripping them through JSON must convert back. Masks are stored in `st_masks` as `list[np.ndarray | None]`, where `None` (never annotated) is meaningfully different from an all-zero mask.
 
 ## Linting and Formatting

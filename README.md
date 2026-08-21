@@ -45,6 +45,12 @@ Open http://127.0.0.1:7860 in your browser.
    - Use **Undo** to remove the last point or **Clear** to reset the current frame.
 3. **Generate composite** -- Adjust the **Alpha** blending slider and click **Generate Motion Trail**. The result is saved to the specified output path.
 
+### Output format
+
+The extension of the **Output path** selects the format: `.png` (default), `.jpg` / `.jpeg`, `.webp`, `.bmp` and `.tiff` are supported. Anything else (or no extension at all) is saved as PNG, with a warning naming the file that was actually written.
+
+The **Result** panel serves that exact file, so its download button gives you the format you asked for. TIFF is the one exception -- browsers cannot display it, so the panel shows a PNG preview while the file on disk stays TIFF.
+
 ### Saving and resuming work
 
 Annotating many frames takes a while, so the work in progress can be saved and picked up later. Open the **Session -- save / restore work in progress** panel at the top of the page:

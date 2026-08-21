@@ -545,6 +545,31 @@ EMPHASIS_MODES = {
     "First & last frames": "first_last",
 }
 
+# Extensions OpenCV can encode; the output path's suffix picks the format.
+OUTPUT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+# Of those, the ones a browser can display inline in the Result panel.
+BROWSER_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
+
+def _resolve_output_path(output_path: str) -> Path:
+    """Path to write the composite to, in a format OpenCV can encode.
+
+    A blank or unsupported suffix falls back to PNG (with a warning naming the
+    file actually written) rather than failing after the user has waited for
+    the segmentation — ``cv2.imwrite`` raises on an extension it can't encode.
+    """
+    out = Path(str(output_path or "").strip() or DEFAULT_SETTINGS["output_path"])
+    if not out.name:
+        out = Path(DEFAULT_SETTINGS["output_path"])
+    ext = out.suffix.lower()
+    if ext not in OUTPUT_EXTS:
+        out = out.with_suffix(".png")
+        gr.Warning(
+            f"Unsupported output format '{ext or '(none)'}' – saved as {out.name}"
+        )
+    return out
+
+
 def generate_composite(
     sets: list,
     background,
@@ -581,11 +606,26 @@ def generate_composite(
         emphasis=EMPHASIS_MODES.get(emphasis_label, "last"),
     )
 
-    out = Path(output_path)
+    out = _resolve_output_path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out), composite)
+    try:
+        written = cv2.imwrite(str(out), composite)
+    except cv2.error as exc:
+        gr.Warning(f"Could not write {out}: {exc}")
+        return cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
+    if not written:
+        gr.Warning(f"Could not write {out}")
+        return cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
 
+    gr.Info(f"Saved {out}")
+    # Hand the Result panel the file itself, so it downloads in exactly the
+    # format that was written; a numpy array would be re-encoded (as webp by
+    # default). Formats a browser can't display fall back to the pixels — the
+    # file on disk is still in the requested format either way.
+    if out.suffix.lower() in BROWSER_EXTS:
+        return str(out.resolve())  # absolute: Gradio serves it regardless of cwd
     return cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
+
 
 # ---------------------------------------------------------------------------
 # Session save / restore
@@ -933,11 +973,13 @@ def build_ui() -> gr.Blocks:
                 label="Emphasize (opaque) frames",
             )
             out_path = gr.Textbox(
-                label="Output path",
+                label="Output path (.png / .jpg / .webp / .bmp / .tiff)",
                 value=DEFAULT_SETTINGS["output_path"],
             )
             gen_btn = gr.Button("Generate Motion Trail", variant="primary")
-        result_image = gr.Image(label="Result", interactive=False)
+        # format=png only applies when a raw array is returned (a non-displayable
+        # output format); a returned filepath is served untouched.
+        result_image = gr.Image(label="Result", interactive=False, format="png")
 
         # ---- wiring ----
         # User-only events (.input / .release) so programmatic updates from
