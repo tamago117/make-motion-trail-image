@@ -11,11 +11,14 @@ Workflow
 5. Add more sets (+), each annotated separately and given its own colour.
 6. Choose one frame as the background, then generate a composite that
    overlays every set's motion trail in its own colour.
+7. Save the work in progress as a session at any point, and restore it later
+   to continue from exactly where you left off.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import tempfile
@@ -28,8 +31,12 @@ import numpy as np
 from core import (
     VIDEO_EXTS,
     compose_multi_set,
+    default_session_name,
+    list_sessions,
+    load_session,
     load_video,
     run_predictor_on_frame,
+    save_session,
 )
 
 # ---------------------------------------------------------------------------
@@ -538,7 +545,6 @@ EMPHASIS_MODES = {
     "First & last frames": "first_last",
 }
 
-
 def generate_composite(
     sets: list,
     background,
@@ -581,6 +587,194 @@ def generate_composite(
 
     return cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
 
+# ---------------------------------------------------------------------------
+# Session save / restore
+# ---------------------------------------------------------------------------
+
+# Single source of truth for the settings widgets' initial values; also the
+# fallback when a restored session predates one of them.
+DEFAULT_SETTINGS = {
+    "start_sec": "0",
+    "end_sec": "0",
+    "interval_sec": 1.0,
+    "alpha": 0.7,
+    "tint_strength": 0.5,
+    "emphasis": "Last frame",
+    "output_path": "outputs/sample_result.png",
+}
+
+# Number of outputs restore_session_cb feeds back into the UI.
+_RESTORE_OUTPUTS = 21
+
+
+def _no_restore():
+    """Leave every restore output untouched (used on error paths)."""
+    return tuple(gr.update() for _ in range(_RESTORE_OUTPUTS))
+
+
+def save_session_cb(
+    sets: list,
+    active: int,
+    idx: int,
+    background,
+    video_path,
+    name: str,
+    start_sec: str,
+    end_sec: str,
+    interval_sec: float,
+    alpha: float,
+    tint_strength: float,
+    emphasis_label: str,
+    output_path: str,
+):
+    """Write the current workspace (frames, masks, points, settings) to disk."""
+    if not any(s["frames_bgr"] for s in sets):
+        gr.Warning("Nothing to save – load frames into a set first")
+        return gr.update(), gr.update()
+
+    name = str(name or "").strip() or default_session_name()
+    settings = {
+        "start_sec": start_sec,
+        "end_sec": end_sec,
+        "interval_sec": interval_sec,
+        "alpha": alpha,
+        "tint_strength": tint_strength,
+        "emphasis": emphasis_label,
+        "output_path": output_path,
+    }
+    try:
+        path = save_session(
+            name,
+            sets,
+            active=active,
+            idx=idx,
+            background_bgr=background,
+            video_path=video_path,
+            settings=settings,
+        )
+    except (OSError, ValueError) as exc:
+        gr.Warning(f"Could not save the session: {exc}")
+        return gr.update(), gr.update()
+
+    gr.Info(f"Saved session to {path}")
+    return gr.update(choices=list_sessions(), value=path.name), path.name
+
+
+def generate_and_autosave(
+    sets: list,
+    background,
+    alpha: float,
+    tint_strength: float,
+    emphasis_label: str,
+    output_path: str,
+    active: int,
+    idx: int,
+    video_path,
+    name: str,
+    start_sec: str,
+    end_sec: str,
+    interval_sec: float,
+    autosave: bool,
+):
+    """Generate the composite, then snapshot the session that produced it.
+
+    The session keeps the name shown in the box, so repeated generations update
+    one session rather than piling up; a blank box gets a timestamped name that
+    is written back, and subsequent generations then update that one.
+    """
+    result = generate_composite(
+        sets, background, alpha, tint_strength, emphasis_label, output_path
+    )
+    if result is None or not autosave:
+        return result, gr.update(), gr.update()
+
+    selector, saved_name = save_session_cb(
+        sets,
+        active,
+        idx,
+        background,
+        video_path,
+        name,
+        start_sec,
+        end_sec,
+        interval_sec,
+        alpha,
+        tint_strength,
+        emphasis_label,
+        output_path,
+    )
+    return result, selector, saved_name
+
+
+def restore_session_cb(name):
+    """Repaint the whole workspace from a saved session."""
+    if not name:
+        gr.Warning("Select a saved session first")
+        return _no_restore()
+    try:
+        data = load_session(name)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        gr.Warning(f"Could not restore session '{name}': {exc}")
+        return _no_restore()
+
+    sets = data["sets"] or [_new_set(_next_color(0))]
+    active = min(max(data["active"], 0), len(sets) - 1)
+    s = sets[active]
+
+    if s["frames"]:
+        # Keep st_idx and the slider in sync: change_frame only fires on
+        # .release, so a mismatch would annotate a frame that isn't shown.
+        idx = min(max(data["idx"], 0), len(s["frames"]) - 1)
+        img, preview, _, _ = _current_views(
+            s["frames"], s["points_map"], idx, s["masks"]
+        )
+        slider = gr.update(maximum=max(len(s["frames"]) - 1, 0), value=idx)
+    else:
+        idx = 0
+        img, preview = None, None
+        slider = gr.update(maximum=0, value=0)
+
+    bg = data["background_bgr"]
+    bg_rgb = cv2.cvtColor(bg, cv2.COLOR_BGR2RGB) if bg is not None else None
+
+    # The dropped video lived in an upload temp dir, so it is usually gone by
+    # now; the extracted frames are restored either way.
+    video_path = data["video_path"]
+    if video_path and Path(video_path).is_file():
+        player = _playable_video(video_path)
+    else:
+        video_path, player = None, None
+
+    cfg = {**DEFAULT_SETTINGS, **data["settings"]}
+    emphasis = cfg["emphasis"]
+    if emphasis not in EMPHASIS_MODES:
+        emphasis = DEFAULT_SETTINGS["emphasis"]
+
+    gr.Info(f"Restored session '{name}'")
+    return (
+        sets,  # st_sets
+        active,  # st_active
+        idx,  # st_idx
+        bg,  # st_bg
+        video_path,  # st_video
+        gr.update(choices=_set_choices(sets), value=f"Set {active + 1}"),
+        img,  # input_image
+        preview,  # preview_image
+        slider,  # frame_slider
+        _picker_hex(s["color"], active),  # color_picker
+        s["color"] is None,  # no_color_checkbox
+        bg_rgb,  # bg_preview
+        player,  # video_player
+        cfg["start_sec"],
+        cfg["end_sec"],
+        cfg["interval_sec"],
+        cfg["alpha"],
+        cfg["tint_strength"],
+        emphasis,
+        cfg["output_path"],
+        name,  # session_name
+    )
+
 
 # ---------------------------------------------------------------------------
 # Gradio UI
@@ -611,6 +805,30 @@ def build_ui() -> gr.Blocks:
         st_idx = gr.State(0)  # current frame within active set
         st_bg = gr.State(None)  # chosen background frame (BGR)
         st_video = gr.State(None)  # original path of the dropped video
+
+        # ---- session save / restore ----
+        with gr.Accordion("Session – save / restore work in progress", open=False):
+            with gr.Row():
+                session_name = gr.Textbox(
+                    label="Session name",
+                    placeholder="blank = timestamp",
+                    scale=3,
+                )
+                save_session_btn = gr.Button("Save session", scale=1)
+            autosave_checkbox = gr.Checkbox(
+                label="Autosave on Generate Motion Trail",
+                value=True,
+                info="Updates the session named above after every composite.",
+            )
+            with gr.Row():
+                session_selector = gr.Dropdown(
+                    choices=list_sessions(),
+                    value=None,
+                    label="Saved sessions (newest first)",
+                    scale=3,
+                )
+                refresh_sessions_btn = gr.Button("Refresh list", scale=1)
+                restore_session_btn = gr.Button("Restore session", scale=1)
 
         # ---- set management ----
         with gr.Row():
@@ -646,17 +864,17 @@ def build_ui() -> gr.Blocks:
         with gr.Row():
             start_sec = gr.Textbox(
                 label="Start (video)",
-                value="0",
+                value=DEFAULT_SETTINGS["start_sec"],
                 placeholder="sec or mm:ss.s, e.g. 1:23.5",
             )
             end_sec = gr.Textbox(
                 label="End (0 = until end)",
-                value="0",
+                value=DEFAULT_SETTINGS["end_sec"],
                 placeholder="sec or mm:ss.s, e.g. 2:05",
             )
             interval_sec = gr.Number(
                 label="Interval (sec, video)",
-                value=1.0,
+                value=DEFAULT_SETTINGS["interval_sec"],
                 minimum=0.01,
             )
             extract_btn = gr.Button("Extract frames from video", scale=1)
@@ -699,17 +917,24 @@ def build_ui() -> gr.Blocks:
 
         # ---- composite ----
         with gr.Row():
-            alpha_slider = gr.Slider(0.0, 1.0, value=0.7, step=0.05, label="Alpha")
+            alpha_slider = gr.Slider(
+                0.0, 1.0, value=DEFAULT_SETTINGS["alpha"], step=0.05, label="Alpha"
+            )
             tint_slider = gr.Slider(
-                0.0, 1.0, value=0.5, step=0.05, label="Tint strength"
+                0.0,
+                1.0,
+                value=DEFAULT_SETTINGS["tint_strength"],
+                step=0.05,
+                label="Tint strength",
             )
             emphasis_radio = gr.Radio(
-                ["None", "Last frame", "First & last frames"],
-                value="Last frame",
+                list(EMPHASIS_MODES),
+                value=DEFAULT_SETTINGS["emphasis"],
                 label="Emphasize (opaque) frames",
             )
             out_path = gr.Textbox(
-                label="Output path", value="outputs/sample_result.png"
+                label="Output path",
+                value=DEFAULT_SETTINGS["output_path"],
             )
             gen_btn = gr.Button("Generate Motion Trail", variant="primary")
         result_image = gr.Image(label="Result", interactive=False)
@@ -841,7 +1066,7 @@ def build_ui() -> gr.Blocks:
         )
 
         gen_btn.click(
-            generate_composite,
+            generate_and_autosave,
             inputs=[
                 st_sets,
                 st_bg,
@@ -849,8 +1074,69 @@ def build_ui() -> gr.Blocks:
                 tint_slider,
                 emphasis_radio,
                 out_path,
+                st_active,
+                st_idx,
+                st_video,
+                session_name,
+                start_sec,
+                end_sec,
+                interval_sec,
+                autosave_checkbox,
             ],
-            outputs=[result_image],
+            outputs=[result_image, session_selector, session_name],
+        )
+
+        save_session_btn.click(
+            save_session_cb,
+            inputs=[
+                st_sets,
+                st_active,
+                st_idx,
+                st_bg,
+                st_video,
+                session_name,
+                start_sec,
+                end_sec,
+                interval_sec,
+                alpha_slider,
+                tint_slider,
+                emphasis_radio,
+                out_path,
+            ],
+            outputs=[session_selector, session_name],
+        )
+
+        refresh_sessions_btn.click(
+            lambda: gr.update(choices=list_sessions()),
+            outputs=[session_selector],
+        )
+
+        restore_session_btn.click(
+            restore_session_cb,
+            inputs=[session_selector],
+            outputs=[
+                st_sets,
+                st_active,
+                st_idx,
+                st_bg,
+                st_video,
+                set_selector,
+                input_image,
+                preview_image,
+                frame_slider,
+                color_picker,
+                no_color_checkbox,
+                bg_preview,
+                video_player,
+                start_sec,
+                end_sec,
+                interval_sec,
+                alpha_slider,
+                tint_slider,
+                emphasis_radio,
+                out_path,
+                session_name,
+            ],
         )
 
     return demo

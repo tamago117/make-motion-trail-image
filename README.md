@@ -45,6 +45,18 @@ Open http://127.0.0.1:7860 in your browser.
    - Use **Undo** to remove the last point or **Clear** to reset the current frame.
 3. **Generate composite** -- Adjust the **Alpha** blending slider and click **Generate Motion Trail**. The result is saved to the specified output path.
 
+### Saving and resuming work
+
+Annotating many frames takes a while, so the work in progress can be saved and picked up later. Open the **Session -- save / restore work in progress** panel at the top of the page:
+
+- **Save session** -- Writes every set (frames, masks, point prompts, colours), the chosen background and all the settings (times, interval, alpha, tint, emphasis, output path) to `sessions/<name>/`. Leave the name blank to get a timestamped one; saving again with the same name updates it in place.
+- **Autosave on Generate Motion Trail** (on by default) -- Saves the session automatically every time a composite is generated, under the name in the box. A blank name gets a timestamped one that is filled back in, so later generations keep updating that same session instead of piling up. Untick it if you would rather only save by hand.
+- **Restore session** -- Pick a saved session from the dropdown (newest first) and click **Restore session** to bring the whole workspace back, including which set and frame you were on. **Refresh list** re-reads the directory if sessions were added from elsewhere.
+
+Sessions store the frames as PNG, so a restored session reproduces exactly the same composite. They do not need the original video or image folder, which means a session survives an app restart -- only the video *preview* is dropped, since the dropped file itself is not kept.
+
+Re-saving is incremental: images whose contents haven't changed are left on disk untouched, so tweaking **Alpha** and regenerating re-saves in a fraction of the time of the first save (~0.5 s vs ~3 s for 60 frames at 1080p) and doesn't rewrite the frames. The first save of such a set is still a ~220 MB frame dump, so delete sessions you no longer need from `sessions/`.
+
 ### Preparing input
 
 You can supply frames in two ways, both via drag & drop:
