@@ -8,7 +8,8 @@ Workflow
 2. For each frame, click to place positive / negative point prompts.
 3. SAM 3 segments the object in real time and shows a mask preview.
 4. Navigate frames and annotate each independently.
-5. Add more sets (+), each annotated separately and given its own colour.
+5. Add more sets (+), each annotated separately and given its own colour;
+   reorder them to choose which trail is drawn on top of which.
 6. Choose one frame as the background, then generate a composite that
    overlays every set's motion trail in its own colour.
 7. Save the work in progress as a session at any point, and restore it later
@@ -298,6 +299,31 @@ def remove_set(sets: list, active: int):
         slider,
         _picker_hex(s["color"], active),
         s["color"] is None,
+    )
+
+
+def move_set(sets: list, active: int, delta: int):
+    """Swap the active set with the neighbour *delta* positions away.
+
+    Sets are composited in list order, so the last one is drawn on top; moving a
+    set later therefore brings its trail to the front. The active set travels
+    with the move, so the workspace keeps showing the same frames — only the
+    "Set N" label it answers to changes.
+    """
+    sets = list(sets)
+    target = active + delta
+    if not (0 <= active < len(sets)) or not (0 <= target < len(sets)):
+        where = "last" if delta > 0 else "first"
+        gr.Warning(f"The active set is already {where} in the order")
+        return sets, active, gr.update(), gr.update()
+
+    sets[active], sets[target] = sets[target], sets[active]
+    active = target
+    return (
+        sets,  # st_sets
+        active,  # st_active
+        gr.update(choices=_set_choices(sets), value=f"Set {active + 1}"),
+        _picker_hex(sets[active]["color"], active),  # color_picker
     )
 
 
@@ -877,6 +903,13 @@ def build_ui() -> gr.Blocks:
             )
             add_btn = gr.Button("+ Add Set", scale=1)
             remove_btn = gr.Button("Remove Set", scale=1)
+        with gr.Row():
+            move_earlier_btn = gr.Button("◀ Move earlier (behind)", scale=1)
+            move_later_btn = gr.Button("▶ Move later (on top)", scale=1)
+            gr.Markdown(
+                "Sets are drawn in order, so the **last set is on top** of the "
+                "others where their trails overlap."
+            )
 
         # ---- load (drag & drop) ----
         gr.Markdown(
@@ -1028,6 +1061,18 @@ def build_ui() -> gr.Blocks:
                 color_picker,
                 no_color_checkbox,
             ],
+        )
+
+        move_earlier_btn.click(
+            lambda sets, active: move_set(sets, active, -1),
+            inputs=[st_sets, st_active],
+            outputs=[st_sets, st_active, set_selector, color_picker],
+        )
+
+        move_later_btn.click(
+            lambda sets, active: move_set(sets, active, 1),
+            inputs=[st_sets, st_active],
+            outputs=[st_sets, st_active, set_selector, color_picker],
         )
 
         color_picker.input(

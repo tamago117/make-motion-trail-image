@@ -43,7 +43,8 @@ Open http://127.0.0.1:7860 in your browser.
    - Select **Negative** mode and click on areas to exclude (red dots).
    - The mask preview updates in real time after each click.
    - Use **Undo** to remove the last point or **Clear** to reset the current frame.
-3. **Generate composite** -- Adjust the **Alpha** blending slider and click **Generate Motion Trail**. The result is saved to the specified output path.
+3. **Layer several trails** -- **+ Add Set** gives another object its own frames, colour and annotations. Sets are composited in list order, so the **last set is drawn on top** where trails overlap. **◀ Move earlier (behind)** / **▶ Move later (on top)** change that order; the active set travels with the button, so only the **Set N** label it answers to changes. A restored session is reordered the same way, and saving writes the new order back.
+4. **Generate composite** -- Adjust the **Alpha** blending slider and click **Generate Motion Trail**. The result is saved to the specified output path.
 
 ### Output format
 
