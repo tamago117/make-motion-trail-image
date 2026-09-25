@@ -29,7 +29,6 @@ from motion_trail.ui.state import (
 )
 from motion_trail.video import VIDEO_OUT_EXTS, write_video
 
-
 EMPHASIS_MODES = {
     "None": "none",
     "Last frame": "last",

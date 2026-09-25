@@ -57,9 +57,16 @@ def playable_video(path: str):
     try:
         probe = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name",
-                "-of", "default=noprint_wrappers=1:nokey=1", str(src),
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(src),
             ],
             capture_output=True,
             text=True,
@@ -84,9 +91,23 @@ def playable_video(path: str):
     try:
         subprocess.run(
             [
-                "ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
-                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-movflags", "+faststart", str(out),
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(src),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(out),
             ],
             check=True,
         )
@@ -291,7 +312,9 @@ def load_image_files(files: list, sets: list, active: int):
     if not frames:
         gr.Warning("No images (.png/.jpg/.jpeg) found in the dropped folder")
         return None, None, gr.update(), 0, sets, gr.update()
-    return _ingest_frames(resize_to_first(frames), sets, active, "(dropped folder)", None)
+    return _ingest_frames(
+        resize_to_first(frames), sets, active, "(dropped folder)", None
+    )
 
 
 def on_video_drop(video_path):
