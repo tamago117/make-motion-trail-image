@@ -45,6 +45,7 @@ Open http://127.0.0.1:7860 in your browser.
    - Use **Undo** to remove the last point or **Clear** to reset the current frame.
 3. **Layer several trails** -- **+ Add Set** gives another object its own frames, colour and annotations. Sets are composited in list order, so the **last set is drawn on top** where trails overlap. **◀ Move earlier (behind)** / **▶ Move later (on top)** change that order; the active set travels with the button, so only the **Set N** label it answers to changes. A restored session is reordered the same way, and saving writes the new order back.
 4. **Generate composite** -- Adjust the **Alpha** blending slider and click **Generate Motion Trail**. The result is saved to the specified output path.
+5. **Generate a video** (optional) -- Click **Generate Trail Video** for an mp4 in which the trail builds up over time, each step showing every set's trail up to that point; the last frame is exactly the still composite. Playback runs on the source's clock. **Every set starts at 0 s on its own first annotated frame**, so trails you picked out at different points of different videos all begin together instead of waiting for each other. From there each step is held for the **Interval (sec)** that set's frames were extracted at, so the trail grows at the speed the object actually moved and sets sampled at different rates each keep their own speed. A stretch you did not annotate becomes a pause rather than being skipped, and a set with no interval of its own -- a folder of images, or a session saved before the parameters were kept per set -- falls back to the **Interval (sec)** box. **Video FPS** (30 by default) only decides how smoothly that timeline is encoded, not how fast it plays. Alpha, tint and **Emphasize** apply as they do to the still, so with the default *Last frame* the newest position is opaque and the trail behind it fades.
 
 ### Output format
 
@@ -52,13 +53,15 @@ The extension of the **Output path** selects the format: `.png` (default), `.jpg
 
 The **Result** panel serves that exact file, so its download button gives you the format you asked for. TIFF is the one exception -- browsers cannot display it, so the panel shows a PNG preview while the file on disk stays TIFF.
 
+The **Video output path** works the same way, over `.mp4` (default), `.mov`, `.mkv` and `.avi`. The video is encoded as H.264 with `ffmpeg`, which also makes it playable in the preview panel; without `ffmpeg` on `PATH` it falls back to OpenCV's mpeg4 writer, which desktop players handle but the in-page preview cannot show.
+
 ### Saving and resuming work
 
 Annotating many frames takes a while, so the work in progress can be saved and picked up later. Open the **Session -- save / restore work in progress** panel at the top of the page:
 
 - **Save session** -- Writes every set (frames, masks, point prompts, colours), the chosen background and all the settings (times, interval, alpha, tint, emphasis, output path) to `sessions/<name>/`. Leave the name blank to get a timestamped one; saving again with the same name updates it in place.
 - **Autosave on Generate Motion Trail** (on by default) -- Saves the session automatically every time a composite is generated, under the name in the box. A blank name gets a timestamped one that is filled back in, so later generations keep updating that same session instead of piling up. Untick it if you would rather only save by hand.
-- **Restore session** -- Pick a saved session from the dropdown (newest first) and click **Restore session** to bring the whole workspace back, including which set and frame you were on. **Refresh list** re-reads the directory if sessions were added from elsewhere.
+- **Restore session** -- Pick a saved session from the dropdown (newest first) and click **Restore session** to bring the whole workspace back, including which set and frame you were on. **Start** / **End** / **Interval (sec)** are stored per set, so they show the values that set's frames were actually extracted with, and switching sets repoints them; a set loaded from an image folder has none and leaves them alone. **Refresh list** re-reads the directory if sessions were added from elsewhere.
 
 Sessions store the frames as PNG, so a restored session reproduces exactly the same composite. They do not need the original video or image folder, which means a session survives an app restart -- only the video *preview* is dropped, since the dropped file itself is not kept.
 

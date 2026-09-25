@@ -11,7 +11,8 @@ Workflow
 5. Add more sets (+), each annotated separately and given its own colour;
    reorder them to choose which trail is drawn on top of which.
 6. Choose one frame as the background, then generate a composite that
-   overlays every set's motion trail in its own colour.
+   overlays every set's motion trail in its own colour, either as a still
+   image or as a video in which the trail grows one frame at a time.
 7. Save the work in progress as a session at any point, and restore it later
    to continue from exactly where you left off.
 """
@@ -31,13 +32,17 @@ import numpy as np
 
 from core import (
     VIDEO_EXTS,
+    VIDEO_OUT_EXTS,
     compose_multi_set,
+    compose_multi_set_progressive,
+    pace_steps,
     default_session_name,
     list_sessions,
     load_session,
     load_video,
     run_predictor_on_frame,
     save_session,
+    write_video,
 )
 
 # ---------------------------------------------------------------------------
@@ -97,6 +102,7 @@ def _new_set(color: tuple[int, int, int]) -> dict:
         "points_map": {},  # dict[int, list[(x, y, label)]]
         "masks": [],  # list[np.ndarray | None]
         "color": color,  # (R, G, B)
+        "extract": None,  # video extraction params, None for an image folder
     }
 
 
@@ -144,6 +150,24 @@ def _parse_color(value) -> tuple[int, int, int] | None:
         if len(nums) >= 3:
             return tuple(int(round(float(n))) for n in nums[:3])
     return None
+
+
+def _extract_updates(s: dict):
+    """Widget updates showing how the active set's frames were extracted.
+
+    Start / End / Interval are shared by every set but describe one extraction,
+    so switching sets repoints them at that set's own values. A set with none
+    recorded — an image folder, or a session saved before they were kept —
+    leaves the widgets alone rather than inventing numbers.
+    """
+    ex = s.get("extract")
+    if not ex:
+        return gr.update(), gr.update(), gr.update()
+    return (
+        gr.update(value=ex["start_sec"]),
+        gr.update(value=ex["end_sec"]),
+        gr.update(value=ex["interval_sec"]),
+    )
 
 
 def _current_views(frames, points_map, idx, masks):
@@ -299,6 +323,7 @@ def remove_set(sets: list, active: int):
         slider,
         _picker_hex(s["color"], active),
         s["color"] is None,
+        *_extract_updates(s),  # start_sec, end_sec, interval_sec
     )
 
 
@@ -345,6 +370,7 @@ def select_set(sets: list, label):
         slider,  # frame_slider
         _picker_hex(s["color"], active),  # color_picker
         s["color"] is None,  # no_color_checkbox
+        *_extract_updates(s),  # start_sec, end_sec, interval_sec
     )
 
 
@@ -393,6 +419,7 @@ def _ingest_frames(
     active: int,
     source_label: str,
     video_out,
+    extract: dict | None = None,
 ):
     """Store *frames_bgr* into the active set and return the standard outputs."""
     frames_rgb = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames_bgr]
@@ -406,6 +433,7 @@ def _ingest_frames(
     s["frames_bgr"] = frames_bgr
     s["points_map"] = {}
     s["masks"] = [None] * len(frames_rgb)
+    s["extract"] = extract
 
     first = frames_rgb[0]
     return (
@@ -444,7 +472,19 @@ def load_video_frames(
         gr.Warning("Could not read frames from video")
         return None, None, gr.update(), 0, sets, gr.update()
     # The player already shows the dropped video, so leave it untouched.
-    return _ingest_frames(frames_bgr, sets, active, str(p), gr.update())
+    return _ingest_frames(
+        frames_bgr,
+        sets,
+        active,
+        str(p),
+        gr.update(),
+        # the values as typed, so a restore shows exactly what was used
+        {
+            "start_sec": start_sec,
+            "end_sec": end_sec,
+            "interval_sec": float(interval_sec or 1.0),
+        },
+    )
 
 
 def load_image_files(files: list, sets: list, active: int):
@@ -577,23 +617,60 @@ OUTPUT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 BROWSER_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
-def _resolve_output_path(output_path: str) -> Path:
-    """Path to write the composite to, in a format OpenCV can encode.
+def _resolve_output_path(output_path: str, exts: set, fallback: str) -> Path:
+    """Path to write to, in one of the *exts* formats the encoder can produce.
 
-    A blank or unsupported suffix falls back to PNG (with a warning naming the
-    file actually written) rather than failing after the user has waited for
-    the segmentation — ``cv2.imwrite`` raises on an extension it can't encode.
+    A blank or unsupported suffix falls back to *fallback*'s format (with a
+    warning naming the file actually written) rather than failing after the
+    user has waited for the whole render — ``cv2.imwrite`` raises on an
+    extension it can't encode, and ffmpeg refuses an unknown container.
     """
-    out = Path(str(output_path or "").strip() or DEFAULT_SETTINGS["output_path"])
+    out = Path(str(output_path or "").strip() or fallback)
     if not out.name:
-        out = Path(DEFAULT_SETTINGS["output_path"])
+        out = Path(fallback)
     ext = out.suffix.lower()
-    if ext not in OUTPUT_EXTS:
-        out = out.with_suffix(".png")
+    if ext not in exts:
+        out = out.with_suffix(Path(fallback).suffix)
         gr.Warning(
             f"Unsupported output format '{ext or '(none)'}' – saved as {out.name}"
         )
     return out
+
+
+def _trail_payload(sets: list, background, default_interval: float = 1.0):
+    """core-shaped sets + the background to draw them on, or (None, None).
+
+    Sets without a single mask are dropped, and if the user never picked a
+    background frame the first annotated set's first frame stands in. Note the
+    fallback follows the set order, so rearranging the sets changes it.
+
+    Each set carries the interval its frames were extracted at, which is what
+    puts the video on a real timeline; *default_interval* covers a set with
+    none recorded (an image folder, or a session saved before they were kept).
+    """
+    usable = [
+        s for s in sets if s["frames_bgr"] and any(m is not None for m in s["masks"])
+    ]
+    if not usable:
+        gr.Warning("No sets with masks – annotate at least one set first")
+        return None, None
+
+    if background is None:
+        background = usable[0]["frames_bgr"][0]
+
+    payload = [
+        {
+            "frames_bgr": s["frames_bgr"],
+            "masks": s["masks"],
+            # RGB -> BGR, or None to keep the object's original colours
+            "color_bgr": None if s["color"] is None else tuple(s["color"][::-1]),
+            "interval_sec": (s.get("extract") or {}).get(
+                "interval_sec", default_interval
+            ),
+        }
+        for s in usable
+    ]
+    return payload, background
 
 
 def generate_composite(
@@ -605,25 +682,10 @@ def generate_composite(
     output_path: str,
 ):
     """Overlay every annotated set's trail onto the chosen background."""
-    usable = [
-        s for s in sets if s["frames_bgr"] and any(m is not None for m in s["masks"])
-    ]
-    if not usable:
-        gr.Warning("No sets with masks – annotate at least one set first")
+    payload, background = _trail_payload(sets, background)
+    if payload is None:
         return None
 
-    if background is None:
-        background = usable[0]["frames_bgr"][0]
-
-    payload = [
-        {
-            "frames_bgr": s["frames_bgr"],
-            "masks": s["masks"],
-            # RGB -> BGR, or None to keep the object's original colours
-            "color_bgr": None if s["color"] is None else tuple(s["color"][::-1]),
-        }
-        for s in usable
-    ]
     composite = compose_multi_set(
         payload,
         background,
@@ -632,7 +694,9 @@ def generate_composite(
         emphasis=EMPHASIS_MODES.get(emphasis_label, "last"),
     )
 
-    out = _resolve_output_path(output_path)
+    out = _resolve_output_path(
+        output_path, OUTPUT_EXTS, DEFAULT_SETTINGS["output_path"]
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         written = cv2.imwrite(str(out), composite)
@@ -653,6 +717,63 @@ def generate_composite(
     return cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
 
 
+def generate_video(
+    sets: list,
+    background,
+    alpha: float,
+    tint_strength: float,
+    emphasis_label: str,
+    video_output_path: str,
+    fps: float,
+    interval_sec: float,
+):
+    """Render the trail as a video that grows on the source's timeline.
+
+    Step *t* holds every set's trail up to frame *t*, so the object walks
+    across the background leaving its fading trail behind; the video's final
+    frame is exactly the still composite the Generate button produces from the
+    same settings.
+
+    **Each set starts at 0 s on its own first annotated frame**, so trails
+    picked out at different points of different videos all begin together.
+    From there a step is held for the interval that set's frames were sampled
+    at, so the trail grows at the speed the object actually moved and an
+    unannotated stretch shows up as a pause rather than being skipped. *fps*
+    only picks how smoothly that timeline is encoded.
+
+    *interval_sec* covers sets with no interval of their own — an image folder,
+    or a session saved before the parameters were kept per set — where it is
+    simply seconds per frame.
+    """
+    payload, background = _trail_payload(sets, background, interval_sec)
+    if payload is None:
+        return None
+
+    out = _resolve_output_path(
+        video_output_path, VIDEO_OUT_EXTS, DEFAULT_SETTINGS["video_output_path"]
+    )
+    steps = compose_multi_set_progressive(
+        payload,
+        background,
+        alpha=alpha,
+        tint_strength=tint_strength,
+        emphasis=EMPHASIS_MODES.get(emphasis_label, "last"),
+    )
+    try:
+        codec = write_video(pace_steps(steps, fps), out, fps)
+    except (OSError, RuntimeError, ValueError, cv2.error) as exc:
+        gr.Warning(f"Could not write {out}: {exc}")
+        return None
+
+    if codec != "h264":
+        gr.Warning(
+            f"ffmpeg not found – wrote {out.name} as mpeg4, which desktop "
+            "players handle but the preview below cannot show"
+        )
+    gr.Info(f"Saved {out}")
+    return str(out.resolve())  # absolute: Gradio serves it regardless of cwd
+
+
 # ---------------------------------------------------------------------------
 # Session save / restore
 # ---------------------------------------------------------------------------
@@ -667,10 +788,12 @@ DEFAULT_SETTINGS = {
     "tint_strength": 0.5,
     "emphasis": "Last frame",
     "output_path": "outputs/sample_result.png",
+    "video_output_path": "outputs/sample_result.mp4",
+    "video_fps": 30.0,
 }
 
 # Number of outputs restore_session_cb feeds back into the UI.
-_RESTORE_OUTPUTS = 21
+_RESTORE_OUTPUTS = 23
 
 
 def _no_restore():
@@ -692,6 +815,8 @@ def save_session_cb(
     tint_strength: float,
     emphasis_label: str,
     output_path: str,
+    video_output_path: str,
+    video_fps: float,
 ):
     """Write the current workspace (frames, masks, points, settings) to disk."""
     if not any(s["frames_bgr"] for s in sets):
@@ -707,6 +832,8 @@ def save_session_cb(
         "tint_strength": tint_strength,
         "emphasis": emphasis_label,
         "output_path": output_path,
+        "video_output_path": video_output_path,
+        "video_fps": video_fps,
     }
     try:
         path = save_session(
@@ -726,6 +853,20 @@ def save_session_cb(
     return gr.update(choices=list_sessions(), value=path.name), path.name
 
 
+def _autosave(autosave: bool, save_args: tuple):
+    """Snapshot the session behind a just-rendered output, if autosave is on.
+
+    The session keeps the name shown in the box, so repeated renders update one
+    session rather than piling up; a blank box gets a timestamped name that is
+    written back, and later renders then update that one.
+    """
+    if not autosave:
+        return gr.update(), gr.update()
+    return save_session_cb(*save_args)
+
+
+# Both render buttons take the same inputs in the same order, so they can share
+# one inputs= list and hand save_session_cb the same arguments.
 def generate_and_autosave(
     sets: list,
     background,
@@ -733,6 +874,8 @@ def generate_and_autosave(
     tint_strength: float,
     emphasis_label: str,
     output_path: str,
+    video_output_path: str,
+    video_fps: float,
     active: int,
     idx: int,
     video_path,
@@ -742,32 +885,85 @@ def generate_and_autosave(
     interval_sec: float,
     autosave: bool,
 ):
-    """Generate the composite, then snapshot the session that produced it.
-
-    The session keeps the name shown in the box, so repeated generations update
-    one session rather than piling up; a blank box gets a timestamped name that
-    is written back, and subsequent generations then update that one.
-    """
+    """Generate the still composite, then snapshot the session behind it."""
     result = generate_composite(
         sets, background, alpha, tint_strength, emphasis_label, output_path
     )
-    if result is None or not autosave:
+    if result is None:
         return result, gr.update(), gr.update()
+    selector, saved_name = _autosave(
+        autosave,
+        (
+            sets,
+            active,
+            idx,
+            background,
+            video_path,
+            name,
+            start_sec,
+            end_sec,
+            interval_sec,
+            alpha,
+            tint_strength,
+            emphasis_label,
+            output_path,
+            video_output_path,
+            video_fps,
+        ),
+    )
+    return result, selector, saved_name
 
-    selector, saved_name = save_session_cb(
+
+def generate_video_and_autosave(
+    sets: list,
+    background,
+    alpha: float,
+    tint_strength: float,
+    emphasis_label: str,
+    output_path: str,
+    video_output_path: str,
+    video_fps: float,
+    active: int,
+    idx: int,
+    video_path,
+    name: str,
+    start_sec: str,
+    end_sec: str,
+    interval_sec: float,
+    autosave: bool,
+):
+    """Render the growing-trail video, then snapshot the session behind it."""
+    result = generate_video(
         sets,
-        active,
-        idx,
         background,
-        video_path,
-        name,
-        start_sec,
-        end_sec,
-        interval_sec,
         alpha,
         tint_strength,
         emphasis_label,
-        output_path,
+        video_output_path,
+        video_fps,
+        interval_sec,
+    )
+    if result is None:
+        return result, gr.update(), gr.update()
+    selector, saved_name = _autosave(
+        autosave,
+        (
+            sets,
+            active,
+            idx,
+            background,
+            video_path,
+            name,
+            start_sec,
+            end_sec,
+            interval_sec,
+            alpha,
+            tint_strength,
+            emphasis_label,
+            output_path,
+            video_output_path,
+            video_fps,
+        ),
     )
     return result, selector, saved_name
 
@@ -812,6 +1008,9 @@ def restore_session_cb(name):
         video_path, player = None, None
 
     cfg = {**DEFAULT_SETTINGS, **data["settings"]}
+    # Sets saved before the parameters were kept per set fall back to the
+    # session-wide values, which are the ones the widgets held at save time.
+    ex = s.get("extract") or {}
     emphasis = cfg["emphasis"]
     if emphasis not in EMPHASIS_MODES:
         emphasis = DEFAULT_SETTINGS["emphasis"]
@@ -831,13 +1030,15 @@ def restore_session_cb(name):
         s["color"] is None,  # no_color_checkbox
         bg_rgb,  # bg_preview
         player,  # video_player
-        cfg["start_sec"],
-        cfg["end_sec"],
-        cfg["interval_sec"],
+        ex.get("start_sec", cfg["start_sec"]),
+        ex.get("end_sec", cfg["end_sec"]),
+        ex.get("interval_sec", cfg["interval_sec"]),
         cfg["alpha"],
         cfg["tint_strength"],
         emphasis,
         cfg["output_path"],
+        cfg["video_output_path"],
+        cfg["video_fps"],
         name,  # session_name
     )
 
@@ -1014,6 +1215,21 @@ def build_ui() -> gr.Blocks:
         # output format); a returned filepath is served untouched.
         result_image = gr.Image(label="Result", interactive=False, format="png")
 
+        # ---- video ----
+        with gr.Row():
+            video_fps = gr.Number(
+                label="Video FPS",
+                value=DEFAULT_SETTINGS["video_fps"],
+                minimum=0.1,
+                info="Encoding rate only — the pace comes from Interval (sec).",
+            )
+            video_out_path = gr.Textbox(
+                label="Video output path (.mp4 / .mov / .mkv / .avi)",
+                value=DEFAULT_SETTINGS["video_output_path"],
+            )
+            gen_video_btn = gr.Button("Generate Trail Video", variant="primary")
+        result_video = gr.Video(label="Trail video", interactive=False)
+
         # ---- wiring ----
         # User-only events (.input / .release) so programmatic updates from
         # add/remove/select/load do not re-trigger the same handlers.
@@ -1028,6 +1244,9 @@ def build_ui() -> gr.Blocks:
                 frame_slider,
                 color_picker,
                 no_color_checkbox,
+                start_sec,
+                end_sec,
+                interval_sec,
             ],
         )
 
@@ -1060,6 +1279,9 @@ def build_ui() -> gr.Blocks:
                 frame_slider,
                 color_picker,
                 no_color_checkbox,
+                start_sec,
+                end_sec,
+                interval_sec,
             ],
         )
 
@@ -1152,25 +1374,36 @@ def build_ui() -> gr.Blocks:
             outputs=[st_bg, bg_preview],
         )
 
+        # Both render buttons feed the same arguments to the same autosave tail.
+        render_inputs = [
+            st_sets,
+            st_bg,
+            alpha_slider,
+            tint_slider,
+            emphasis_radio,
+            out_path,
+            video_out_path,
+            video_fps,
+            st_active,
+            st_idx,
+            st_video,
+            session_name,
+            start_sec,
+            end_sec,
+            interval_sec,
+            autosave_checkbox,
+        ]
+
         gen_btn.click(
             generate_and_autosave,
-            inputs=[
-                st_sets,
-                st_bg,
-                alpha_slider,
-                tint_slider,
-                emphasis_radio,
-                out_path,
-                st_active,
-                st_idx,
-                st_video,
-                session_name,
-                start_sec,
-                end_sec,
-                interval_sec,
-                autosave_checkbox,
-            ],
+            inputs=render_inputs,
             outputs=[result_image, session_selector, session_name],
+        )
+
+        gen_video_btn.click(
+            generate_video_and_autosave,
+            inputs=render_inputs,
+            outputs=[result_video, session_selector, session_name],
         )
 
         save_session_btn.click(
@@ -1189,6 +1422,8 @@ def build_ui() -> gr.Blocks:
                 tint_slider,
                 emphasis_radio,
                 out_path,
+                video_out_path,
+                video_fps,
             ],
             outputs=[session_selector, session_name],
         )
@@ -1222,6 +1457,8 @@ def build_ui() -> gr.Blocks:
                 tint_slider,
                 emphasis_radio,
                 out_path,
+                video_out_path,
+                video_fps,
                 session_name,
             ],
         )
