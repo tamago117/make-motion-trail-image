@@ -24,18 +24,17 @@ make check-hooks
 
 ## Architecture
 
-The application is split into two modules:
-
-- **`core.py`** — framework-independent logic:
-  1. **Image utilities** (`load_images`, `overlay_object_on_background`, `compose_multi_set`) — pure NumPy/OpenCV functions for loading frames and alpha-compositing segmented objects.
-  2. **Video output** (`compose_multi_set_progressive`, `pace_steps`, `write_video`) — renders the trail growing over time and encodes it (ffmpeg H.264, falling back to OpenCV).
-  3. **Session persistence** (`save_session`, `load_session`, `list_sessions`) — saves / restores the whole workspace under `sessions/<name>/`.
-  4. **SAM 3 integration** (`_get_model_and_processor`, `run_predictor_on_frame`) — lazily initializes the SAM 3 model from HuggingFace and runs interactive point-prompt segmentation per frame. The `sam3` package is installed from the Facebook Research GitHub repo.
-
-- **`app.py`** — Gradio GUI and entry point:
-  1. **Visualization helpers** (`_draw_points`, `_overlay_mask`) — draw point annotations and mask overlays for the GUI preview.
-  2. **Gradio callbacks** — manage per-set state (frames, points, masks) held in `st_sets`. Handle click-to-annotate, undo/clear, frame navigation, composite / video generation, and session save/restore.
-  3. **UI builder** (`build_ui`) — constructs the Gradio Blocks layout and wires up callbacks.
+- **`app.py`** — entry point; `build_ui` lays out the Gradio Blocks and wires up the callbacks.
+- **`motion_trail/`** — framework-independent logic:
+  - `frames.py` (`load_images`, `load_video`) — load frames from an image folder or a video.
+  - `compose.py` (`compose_multi_set`, `compose_multi_set_progressive`, `pace_steps`) — alpha-composite the segmented objects as a still, or as a trail growing over time.
+  - `video.py` (`write_video`) — encode frames with ffmpeg H.264, falling back to OpenCV.
+  - `session.py` (`save_session`, `load_session`, `list_sessions`) — save / restore the whole workspace under `sessions/<name>/`.
+  - `sam.py` (`run_predictor_on_frame`) — lazily loads SAM 3 from HuggingFace and runs point-prompt segmentation per frame. The `sam3` package is installed from the Facebook Research GitHub repo.
+- **`motion_trail/ui/`** — Gradio callbacks:
+  - `state.py` — set records and preview drawing.
+  - `edit.py` — set management, frame loading and annotation.
+  - `render.py` — composite / video generation and session save / restore.
 
 Key data flow: frames are stored in both RGB (for display/SAM) and BGR (for OpenCV compositing). Each set in `st_sets` holds its point prompts as `points_map: dict[int, list[(x, y, label)]]` and its masks as `masks: list[np.ndarray | None]`, where `None` means never annotated.
 
