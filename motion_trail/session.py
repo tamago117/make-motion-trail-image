@@ -13,18 +13,11 @@ from typing import List
 import cv2
 import numpy as np
 
-# A session is a directory holding everything needed to resume annotating:
-#
-#     sessions/<name>/
-#         session.json          metadata (points, colours, widget settings)
-#         background.png        chosen background frame, if any
-#         set00/frame_0000.png  the set's frames, losslessly (BGR)
-#         set00/mask_0000.png   masks, only for frames that have one
-#
-# Frames are stored as pixels rather than as a reference to their source,
-# because neither input path survives: a dropped image folder has no path at
-# all and a dropped video lives in an upload temp dir that is gone on restart.
-# PNG (not JPEG) keeps a restored session's composite identical to the original.
+# sessions/<name>/
+#     session.json          points, colours, widget settings
+#     background.png        chosen background frame, if any
+#     set00/frame_0000.png  the set's frames (stored, since uploads don't persist)
+#     set00/mask_0000.png   masks, only for frames that have one
 
 SESSIONS_DIR = Path(__file__).resolve().parents[1] / "sessions"
 SESSION_VERSION = 1
@@ -78,9 +71,7 @@ def _read_manifest(path: Path) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
-# Names a session owns, and may therefore delete when they go stale. Anything
-# else in the directory is left alone — a user is free to point the composite's
-# output path at their session folder, and autosave must not eat the result.
+# Only these names are pruned, so user files placed in a session dir survive.
 _OWNED_TOP = re.compile(r"set\d+$")
 _OWNED_SET = re.compile(r"(frame|mask)_\d+\.png$")
 
@@ -105,18 +96,9 @@ def save_session(
     video_path: str | None = None,
     settings: dict | None = None,
 ) -> Path:
-    """Write the whole workspace to ``sessions/<name>/`` and return that dir.
+    """Write the workspace to ``sessions/<name>/`` and return that dir.
 
-    *sets* are the app's set records (``frames_bgr``, ``masks``, ``points_map``,
-    ``color``, ``dir``); only ``frames_bgr`` is written, since the RGB copy is
-    derived on load. A blank *name* becomes a timestamp; an existing session of
-    the same name is updated in place.
-
-    Re-saving is incremental: images whose content hash matches what the
-    session already holds are left untouched, and files no longer needed are
-    pruned. Re-encoding a 1080p PNG costs ~40 ms against ~6 ms to hash it, so
-    autosaving after every composite stays cheap when the frames haven't
-    changed and only the settings have.
+    Incremental: images whose content hash is unchanged are not re-encoded.
     """
     out = _session_dir(_sanitize_name(name) or default_session_name())
     prev_meta = _read_manifest(out) if out.is_dir() else {}
@@ -158,10 +140,6 @@ def save_session(
                 cv2.imwrite(str(path), binary * 255)  # 0/1 -> 0/255, viewable
         _prune(sub, keep, _OWNED_SET)
 
-        # What this set was extracted with, so a restore can say where its
-        # frames came from; None for a folder of images, which has no such
-        # parameters. Kept per set because the widgets are shared and only ever
-        # hold the last extraction's values.
         extract = s.get("extract") or None
         if extract:
             extract = {
@@ -216,11 +194,7 @@ def save_session(
 
 
 def load_session(name: str) -> dict:
-    """Read a session back into app-shaped state.
-
-    Returns ``{"sets", "active", "idx", "background_bgr", "video_path",
-    "settings"}``, where each set matches the app's in-memory record.
-    """
+    """Read a session back into app-shaped state."""
     path = _session_dir(name)
     meta = json.loads((path / "session.json").read_text(encoding="utf-8"))
     version = int(meta.get("version", 0))

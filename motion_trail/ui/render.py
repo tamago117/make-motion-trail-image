@@ -36,20 +36,13 @@ EMPHASIS_MODES = {
     "First & last frames": "first_last",
 }
 
-# Extensions OpenCV can encode; the output path's suffix picks the format.
 OUTPUT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
-# Of those, the ones a browser can display inline in the Result panel.
+# displayable in the Result panel
 BROWSER_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
 def _resolve_output_path(output_path: str, exts: set, fallback: str) -> Path:
-    """Path to write to, in one of the *exts* formats the encoder can produce.
-
-    A blank or unsupported suffix falls back to *fallback*'s format (with a
-    warning naming the file actually written) rather than failing after the
-    user has waited for the whole render — ``cv2.imwrite`` raises on an
-    extension it can't encode, and ffmpeg refuses an unknown container.
-    """
+    """*output_path*, with an unsupported suffix replaced by *fallback*'s."""
     out = Path(str(output_path or "").strip() or fallback)
     if not out.name:
         out = Path(fallback)
@@ -63,15 +56,9 @@ def _resolve_output_path(output_path: str, exts: set, fallback: str) -> Path:
 
 
 def _trail_payload(sets: list, background, default_interval: float = 1.0):
-    """core-shaped sets + the background to draw them on, or (None, None).
+    """Annotated sets in compose form + the background, or (None, None).
 
-    Sets without a single mask are dropped, and if the user never picked a
-    background frame the first annotated set's first frame stands in. Note the
-    fallback follows the set order, so rearranging the sets changes it.
-
-    Each set carries the interval its frames were extracted at, which is what
-    puts the video on a real timeline; *default_interval* covers a set with
-    none recorded (an image folder, or a session saved before they were kept).
+    Without a chosen background, the first annotated set's first frame is used.
     """
     usable = [
         s for s in sets if s["frames_bgr"] and any(m is not None for m in s["masks"])
@@ -133,10 +120,7 @@ def generate_composite(
         return cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
 
     gr.Info(f"Saved {out}")
-    # Hand the Result panel the file itself, so it downloads in exactly the
-    # format that was written; a numpy array would be re-encoded (as webp by
-    # default). Formats a browser can't display fall back to the pixels — the
-    # file on disk is still in the requested format either way.
+    # a path, not an array: gr.Image would re-encode an array (as webp)
     if out.suffix.lower() in BROWSER_EXTS:
         return str(out.resolve())  # absolute: Gradio serves it regardless of cwd
     return cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
@@ -152,24 +136,7 @@ def generate_video(
     fps: float,
     interval_sec: float,
 ):
-    """Render the trail as a video that grows on the source's timeline.
-
-    Step *t* holds every set's trail up to frame *t*, so the object walks
-    across the background leaving its fading trail behind; the video's final
-    frame is exactly the still composite the Generate button produces from the
-    same settings.
-
-    **Each set starts at 0 s on its own first annotated frame**, so trails
-    picked out at different points of different videos all begin together.
-    From there a step is held for the interval that set's frames were sampled
-    at, so the trail grows at the speed the object actually moved and an
-    unannotated stretch shows up as a pause rather than being skipped. *fps*
-    only picks how smoothly that timeline is encoded.
-
-    *interval_sec* covers sets with no interval of their own — an image folder,
-    or a session saved before the parameters were kept per set — where it is
-    simply seconds per frame.
-    """
+    """Render the trail growing over time; *interval_sec* is for sets without one."""
     payload, background = _trail_payload(sets, background, interval_sec)
     if payload is None:
         return None
@@ -199,8 +166,7 @@ def generate_video(
     return str(out.resolve())  # absolute: Gradio serves it regardless of cwd
 
 
-# Single source of truth for the settings widgets' initial values; also the
-# fallback when a restored session predates one of them.
+# Initial widget values, and the fallback for settings a session lacks.
 DEFAULT_SETTINGS = {
     "start_sec": "0",
     "end_sec": "0",
@@ -218,7 +184,7 @@ _RESTORE_OUTPUTS = 23
 
 
 def _no_restore():
-    """Leave every restore output untouched (used on error paths)."""
+    """Leave every restore output untouched."""
     return tuple(gr.update() for _ in range(_RESTORE_OUTPUTS))
 
 
@@ -275,19 +241,12 @@ def save_session_cb(
 
 
 def _autosave(autosave: bool, save_args: tuple):
-    """Snapshot the session behind a just-rendered output, if autosave is on.
-
-    The session keeps the name shown in the box, so repeated renders update one
-    session rather than piling up; a blank box gets a timestamped name that is
-    written back, and later renders then update that one.
-    """
+    """Save the session under the name in the box, if autosave is on."""
     if not autosave:
         return gr.update(), gr.update()
     return save_session_cb(*save_args)
 
 
-# Both render buttons take the same inputs in the same order, so they can share
-# one inputs= list and hand save_session_cb the same arguments.
 def generate_and_autosave(
     sets: list,
     background,
@@ -420,8 +379,7 @@ def restore_session_cb(name):
     bg = data["background_bgr"]
     bg_rgb = cv2.cvtColor(bg, cv2.COLOR_BGR2RGB) if bg is not None else None
 
-    # The dropped video lived in an upload temp dir, so it is usually gone by
-    # now; the extracted frames are restored either way.
+    # the uploaded video is usually gone by now; the frames are restored anyway
     video_path = data["video_path"]
     if video_path and Path(video_path).is_file():
         player = _playable_video(video_path)
@@ -429,8 +387,6 @@ def restore_session_cb(name):
         video_path, player = None, None
 
     cfg = {**DEFAULT_SETTINGS, **data["settings"]}
-    # Sets saved before the parameters were kept per set fall back to the
-    # session-wide values, which are the ones the widgets held at save time.
     ex = s.get("extract") or {}
     emphasis = cfg["emphasis"]
     if emphasis not in EMPHASIS_MODES:

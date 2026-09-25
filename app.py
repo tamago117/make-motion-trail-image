@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
-"""
-Interactive Gradio GUI for motion-trail image creation using SAM 3.
-
-Workflow
--------
-1. Load a directory of frames into a "set".
-2. For each frame, click to place positive / negative point prompts.
-3. SAM 3 segments the object in real time and shows a mask preview.
-4. Navigate frames and annotate each independently.
-5. Add more sets (+), each annotated separately and given its own colour;
-   reorder them to choose which trail is drawn on top of which.
-6. Choose one frame as the background, then generate a composite that
-   overlays every set's motion trail in its own colour, either as a still
-   image or as a video in which the trail grows one frame at a time.
-7. Save the work in progress as a session at any point, and restore it later
-   to continue from exactly where you left off.
-"""
+"""Motion-trail image creator: Gradio GUI entry point."""
 
 from __future__ import annotations
 
@@ -127,8 +111,7 @@ def build_ui() -> gr.Blocks:
             height=120,
         )
 
-        # Drop target (a plain file box never tries to play the raw codec) and a
-        # separate, read-only preview that shows the browser-playable version.
+        # a plain file box as the drop target, so the raw codec is never played
         video_drop = gr.File(
             label="Drop a video here",
             file_count="single",
@@ -213,8 +196,7 @@ def build_ui() -> gr.Blocks:
                 value=DEFAULT_SETTINGS["output_path"],
             )
             gen_btn = gr.Button("Generate Motion Trail", variant="primary")
-        # format=png only applies when a raw array is returned (a non-displayable
-        # output format); a returned filepath is served untouched.
+        # format=png only applies to an array (a format the browser can't show)
         result_image = gr.Image(label="Result", interactive=False, format="png")
 
         # ---- video ----
@@ -233,8 +215,7 @@ def build_ui() -> gr.Blocks:
         result_video = gr.Video(label="Trail video", interactive=False)
 
         # ---- wiring ----
-        # User-only events (.input / .release) so programmatic updates from
-        # add/remove/select/load do not re-trigger the same handlers.
+        # .input / .release so programmatic updates don't re-trigger handlers
         set_selector.input(
             select_set,
             inputs=[st_sets, set_selector],
@@ -311,9 +292,6 @@ def build_ui() -> gr.Blocks:
             outputs=[st_sets],
         )
 
-        # Drag & drop: an image folder loads immediately; a dropped video is
-        # stored (and shown playable), then Extract pulls frames from it using
-        # the time / interval settings.
         image_drop.upload(
             load_image_files,
             inputs=[image_drop, st_sets, st_active],
@@ -376,7 +354,6 @@ def build_ui() -> gr.Blocks:
             outputs=[st_bg, bg_preview],
         )
 
-        # Both render buttons feed the same arguments to the same autosave tail.
         render_inputs = [
             st_sets,
             st_bg,
@@ -470,6 +447,5 @@ def build_ui() -> gr.Blocks:
 
 if __name__ == "__main__":
     demo = build_ui()
-    # Allow the movie-preview widget to serve videos the user browses to from
-    # anywhere on the machine (this is a local, single-user tool on 127.0.0.1).
+    # serve videos from anywhere: a local, single-user tool
     demo.launch(allowed_paths=["/"], css=UI_CSS)

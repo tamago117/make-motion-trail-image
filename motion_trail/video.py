@@ -10,18 +10,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# Containers an H.264 stream can go into; the output path's suffix picks one.
 VIDEO_OUT_EXTS = {".mp4", ".mov", ".mkv", ".avi"}
 
 
 def write_video(frames_bgr, path: Path, fps: float = 10.0) -> str:
-    """Encode an iterable of BGR frames to *path*; return the codec written.
+    """Encode BGR frames to *path*; return the codec written ("h264" / "mpeg4").
 
-    ffmpeg (H.264) is used when it is on PATH, so the result plays in a browser
-    as well as everywhere else; without it OpenCV's mpeg4 writer takes over,
-    which most desktop players handle but no browser does. The encoder is
-    chosen before any frame is read, because *frames_bgr* may be a generator
-    that cannot be replayed — which also keeps memory at one frame at a time.
+    ffmpeg (browser-playable H.264) is used when on PATH, else OpenCV's mpeg4.
+    *frames_bgr* may be a one-shot generator, so it is streamed, not replayed.
     """
     frames = iter(frames_bgr)
     first = next(frames, None)
@@ -72,12 +68,8 @@ def _write_video_ffmpeg(frames, path: Path, fps: float, w: int, h: int) -> None:
 
 
 def _write_video_opencv(frames, path: Path, fps: float, w: int, h: int) -> None:
-    """Fallback encoder for machines without ffmpeg (mpeg4, not browser-safe).
-
-    Frames are scaled to even dimensions, matching what the ffmpeg branch's
-    scale filter does: this writer accepts an odd size but then silently drops
-    the last row and column, losing an edge of every frame.
-    """
+    """Fallback mpeg4 encoder (not browser-playable) for machines without ffmpeg."""
+    # even size: this writer silently drops the last row / column of an odd one
     w, h = max(w - w % 2, 2), max(h - h % 2, 2)
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
     if not writer.isOpened():

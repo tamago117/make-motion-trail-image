@@ -28,12 +28,7 @@ from motion_trail.ui.state import (
 
 
 def _parse_time(value) -> float:
-    """Parse a time spec to seconds.
-
-    Accepts plain seconds (``"12.5"``), ``"m:s"`` (``"1:23.5"`` -> 83.5) and
-    ``"h:m:s"`` (``"1:02:03"`` -> 3723), all with optional decimals. Blank or
-    unparseable input returns ``0.0``.
-    """
+    """Parse ``"12.5"``, ``"m:s"`` or ``"h:m:s"`` to seconds (blank / invalid -> 0)."""
     if value is None:
         return 0.0
     s = str(value).strip()
@@ -45,23 +40,16 @@ def _parse_time(value) -> float:
         gr.Warning(f"Invalid time: {value}")
         return 0.0
     total = 0.0
-    for p in parts:  # left-to-right: each field is 60× the next (h, m, s)
+    for p in parts:
         total = total * 60 + p
     return max(total, 0.0)
 
 
-# Codecs browsers can play directly, so no transcode is needed.
 _BROWSER_CODECS = {"h264", "avc1", "vp8", "vp9", "av1"}
 
 
 def _playable_video(path: str):
-    """Return a browser-playable version of *path* for the gr.Video widget.
-
-    Browser-compatible files are served as-is. Others (e.g. mpeg4) are
-    transcoded to H.264 mp4 in the system temp dir, so Gradio doesn't try to
-    convert them in place (which fails when the source dir isn't writable).
-    Returns the path string, or ``gr.update()`` if it can't be prepared.
-    """
+    """A browser-playable path for *path*, transcoding to H.264 in the temp dir if needed."""
     src = Path(path)
     if not src.is_file():
         return gr.update()
@@ -86,8 +74,7 @@ def _playable_video(path: str):
 
     out_dir = Path(tempfile.gettempdir()) / "motion_trail_preview"
     out_dir.mkdir(exist_ok=True)
-    # Key the cache on the absolute path + mtime + size so different videos that
-    # happen to share a filename (e.g. several "overhead.mp4") never collide.
+    # keyed on path + mtime + size so same-named videos never collide
     stat = src.stat()
     key = hashlib.md5(
         f"{src.resolve()}:{stat.st_mtime_ns}:{stat.st_size}".encode()
@@ -162,13 +149,7 @@ def remove_set(sets: list, active: int):
 
 
 def move_set(sets: list, active: int, delta: int):
-    """Swap the active set with the neighbour *delta* positions away.
-
-    Sets are composited in list order, so the last one is drawn on top; moving a
-    set later therefore brings its trail to the front. The active set travels
-    with the move, so the workspace keeps showing the same frames — only the
-    "Set N" label it answers to changes.
-    """
+    """Swap the active set with its neighbour; the last set is drawn on top."""
     sets = list(sets)
     target = active + delta
     if not (0 <= active < len(sets)) or not (0 <= target < len(sets)):
@@ -300,14 +281,12 @@ def load_video_frames(
     if not frames_bgr:
         gr.Warning("Could not read frames from video")
         return None, None, gr.update(), 0, sets, gr.update()
-    # The player already shows the dropped video, so leave it untouched.
     return _ingest_frames(
         frames_bgr,
         sets,
         active,
         str(p),
-        gr.update(),
-        # the values as typed, so a restore shows exactly what was used
+        gr.update(),  # the player already shows the dropped video
         {
             "start_sec": start_sec,
             "end_sec": end_sec,
@@ -341,12 +320,7 @@ def load_image_files(files: list, sets: list, active: int):
 
 
 def on_video_drop(video_path):
-    """Handle a dropped video.
-
-    The original path is stored (cv2 reads any codec for frame extraction) and
-    the read-only preview gets a browser-playable copy, so a source codec like
-    mpeg4 is never handed to the player as-is (which shows "not playable").
-    """
+    """Keep the original path for extraction and show a browser-playable copy."""
     if not video_path:
         return None, None
     if Path(video_path).suffix.lower() not in VIDEO_EXTS:

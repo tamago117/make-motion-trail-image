@@ -10,11 +10,7 @@ import numpy as np
 
 
 def load_images(folder: Path) -> Tuple[List[np.ndarray], List[Path]]:
-    """
-    Load every .png / .jpg / .jpeg in *folder* (non-recursive).
-
-    Returns (frames_bgr, paths) sorted lexicographically.
-    """
+    """Load every .png / .jpg / .jpeg in *folder*, sorted by name."""
     exts = {".png", ".jpg", ".jpeg"}
     paths = sorted(p for p in folder.iterdir() if p.suffix.lower() in exts)
     frames = [cv2.imread(str(p)) for p in paths]
@@ -29,7 +25,6 @@ def load_images(folder: Path) -> Tuple[List[np.ndarray], List[Path]]:
     return frames, paths
 
 
-# Video container formats handled by :func:`load_video`.
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 
@@ -52,11 +47,9 @@ def load_video(
     end_sec: float = 0.0,
     interval_sec: float = 1.0,
 ) -> List[np.ndarray]:
-    """Extract one BGR frame every *interval_sec* seconds from a video.
+    """Extract one BGR frame every *interval_sec* over [start_sec, end_sec].
 
-    Frames are sampled across the ``[start_sec, end_sec]`` interval (in seconds);
-    ``end_sec <= 0`` means "until the end". Returns frames resized to the first
-    extracted frame's dimensions, or an empty list if the video can't be read.
+    ``end_sec <= 0`` means until the end. Returns [] if the video can't be read.
     """
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
@@ -69,7 +62,6 @@ def load_video(
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     if total > 0:
-        # Seekable path: jump directly to the chosen frame indices.
         indices = _interval_indices(start_sec, end_sec, interval_sec, fps, total)
         frames = []
         for fi in indices:

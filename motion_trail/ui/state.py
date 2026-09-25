@@ -30,7 +30,7 @@ def _overlay_mask(
     return vis.astype(np.uint8)
 
 
-# Distinct default colours assigned to new sets (RGB).
+# Default colours assigned to new sets (RGB).
 PALETTE_RGB = [
     (255, 64, 64),  # red
     (64, 128, 255),  # blue
@@ -108,13 +108,7 @@ def _parse_color(value) -> tuple[int, int, int] | None:
 
 
 def _extract_updates(s: dict):
-    """Widget updates showing how the active set's frames were extracted.
-
-    Start / End / Interval are shared by every set but describe one extraction,
-    so switching sets repoints them at that set's own values. A set with none
-    recorded — an image folder, or a session saved before they were kept —
-    leaves the widgets alone rather than inventing numbers.
-    """
+    """Start / End / Interval updates for the set's own extraction (none: untouched)."""
     ex = s.get("extract")
     if not ex:
         return gr.update(), gr.update(), gr.update()
