@@ -28,7 +28,7 @@ def load_images(folder: Path) -> Tuple[List[np.ndarray], List[Path]]:
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 
-def _resize_to_first(frames: List[np.ndarray]) -> List[np.ndarray]:
+def resize_to_first(frames: List[np.ndarray]) -> List[np.ndarray]:
     """Resize every frame to match the first one's (H, W)."""
     if not frames:
         return frames
@@ -70,7 +70,7 @@ def load_video(
             if ok and frame is not None:
                 frames.append(frame)
         cap.release()
-        return _resize_to_first(frames)
+        return resize_to_first(frames)
 
     # Frame count unknown (some codecs): read sequentially, then sample.
     all_frames = []
@@ -83,7 +83,7 @@ def load_video(
     if not all_frames:
         return []
     indices = _interval_indices(start_sec, end_sec, interval_sec, fps, len(all_frames))
-    return _resize_to_first([all_frames[i] for i in indices])
+    return resize_to_first([all_frames[i] for i in indices])
 
 
 def _interval_indices(

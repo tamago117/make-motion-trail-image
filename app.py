@@ -31,15 +31,7 @@ from motion_trail.ui.render import (
     restore_session_cb,
     save_session_cb,
 )
-from motion_trail.ui.state import _new_set, _next_color, _rgb_to_hex
-
-
-# Centre the small "or" label between the two browse buttons (passed to launch).
-UI_CSS = (
-    "#browse-or{flex:0 0 auto !important;min-width:0 !important;"
-    "display:flex;align-items:center;justify-content:center;}"
-    "#browse-or p{margin:0;}"
-)
+from motion_trail.ui.state import new_set, next_color, rgb_to_hex
 
 
 def build_ui() -> gr.Blocks:
@@ -50,10 +42,10 @@ def build_ui() -> gr.Blocks:
             "pick a background frame, then overlay every trail."
         )
 
-        init_color = _next_color(0)
+        init_color = next_color(0)
 
         # ---- state ----
-        st_sets = gr.State([_new_set(init_color)])  # list[set dict]
+        st_sets = gr.State([new_set(init_color)])  # list[set dict]
         st_active = gr.State(0)  # active set index
         st_idx = gr.State(0)  # current frame within active set
         st_bg = gr.State(None)  # chosen background frame (BGR)
@@ -140,7 +132,7 @@ def build_ui() -> gr.Blocks:
 
         with gr.Row():
             color_picker = gr.ColorPicker(
-                label="Set colour", value=_rgb_to_hex(init_color)
+                label="Set colour", value=rgb_to_hex(init_color)
             )
             no_color_checkbox = gr.Checkbox(
                 label="No colour (keep original)", value=False
@@ -448,4 +440,4 @@ def build_ui() -> gr.Blocks:
 if __name__ == "__main__":
     demo = build_ui()
     # serve videos from anywhere: a local, single-user tool
-    demo.launch(allowed_paths=["/"], css=UI_CSS)
+    demo.launch(allowed_paths=["/"])

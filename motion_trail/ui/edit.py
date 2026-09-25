@@ -10,20 +10,19 @@ from pathlib import Path
 import cv2
 import gradio as gr
 
-from motion_trail.frames import VIDEO_EXTS, load_video
+from motion_trail.frames import VIDEO_EXTS, load_video, resize_to_first
 from motion_trail.sam import run_predictor_on_frame
 from motion_trail.ui.state import (
-    _current_views,
-    _draw_points,
-    _extract_updates,
-    _label_to_index,
-    _new_set,
-    _next_color,
-    _overlay_mask,
-    _parse_color,
-    _picker_hex,
-    _rgb_to_hex,
-    _set_choices,
+    current_views,
+    extract_updates,
+    label_to_index,
+    new_set,
+    next_color,
+    parse_color,
+    picker_hex,
+    rgb_to_hex,
+    selector_update,
+    show_set,
 )
 
 
@@ -48,7 +47,7 @@ def _parse_time(value) -> float:
 _BROWSER_CODECS = {"h264", "avc1", "vp8", "vp9", "av1"}
 
 
-def _playable_video(path: str):
+def playable_video(path: str):
     """A browser-playable path for *path*, transcoding to H.264 in the temp dir if needed."""
     src = Path(path)
     if not src.is_file():
@@ -99,18 +98,18 @@ def _playable_video(path: str):
 
 def add_set(sets: list):
     """Append a new empty set, select it, and clear the workspace."""
-    color = _next_color(len(sets))
-    sets = sets + [_new_set(color)]
+    color = next_color(len(sets))
+    sets = sets + [new_set(color)]
     active = len(sets) - 1
     return (
         sets,  # st_sets
         active,  # st_active
         0,  # st_idx
-        gr.update(choices=_set_choices(sets), value=f"Set {active + 1}"),
+        selector_update(sets, active),  # set_selector
         None,  # input_image
         None,  # preview_image
         gr.update(maximum=0, value=0),  # frame_slider
-        _rgb_to_hex(color),  # color_picker
+        rgb_to_hex(color),  # color_picker
         False,  # no_color_checkbox
     )
 
@@ -121,30 +120,21 @@ def remove_set(sets: list, active: int):
     if 0 <= active < len(sets):
         sets.pop(active)
     if not sets:
-        sets = [_new_set(_next_color(0))]
+        sets = [new_set(next_color(0))]
         active = 0
     else:
         active = min(active, len(sets) - 1)
 
     s = sets[active]
-    if s["frames"]:
-        img, preview, _, _ = _current_views(s["frames"], s["points_map"], 0, s["masks"])
-        slider = gr.update(maximum=max(len(s["frames"]) - 1, 0), value=0)
-    else:
-        img, preview = None, None
-        slider = gr.update(maximum=0, value=0)
-
     return (
-        sets,
-        active,
-        0,
-        gr.update(choices=_set_choices(sets), value=f"Set {active + 1}"),
-        img,
-        preview,
-        slider,
-        _picker_hex(s["color"], active),
-        s["color"] is None,
-        *_extract_updates(s),  # start_sec, end_sec, interval_sec
+        sets,  # st_sets
+        active,  # st_active
+        0,  # st_idx
+        selector_update(sets, active),  # set_selector
+        *show_set(s),  # input_image, preview_image, frame_slider
+        picker_hex(s["color"], active),  # color_picker
+        s["color"] is None,  # no_color_checkbox
+        *extract_updates(s),  # start_sec, end_sec, interval_sec
     )
 
 
@@ -162,36 +152,28 @@ def move_set(sets: list, active: int, delta: int):
     return (
         sets,  # st_sets
         active,  # st_active
-        gr.update(choices=_set_choices(sets), value=f"Set {active + 1}"),
-        _picker_hex(sets[active]["color"], active),  # color_picker
+        selector_update(sets, active),  # set_selector
+        picker_hex(sets[active]["color"], active),  # color_picker
     )
 
 
 def select_set(sets: list, label):
     """Switch the active set and repaint the workspace from its state."""
-    active = _label_to_index(label, sets)
+    active = label_to_index(label, sets)
     s = sets[active]
-    if s["frames"]:
-        img, preview, _, _ = _current_views(s["frames"], s["points_map"], 0, s["masks"])
-        slider = gr.update(maximum=max(len(s["frames"]) - 1, 0), value=0)
-    else:
-        img, preview = None, None
-        slider = gr.update(maximum=0, value=0)
     return (
         active,  # st_active
         0,  # st_idx
-        img,  # input_image
-        preview,  # preview_image
-        slider,  # frame_slider
-        _picker_hex(s["color"], active),  # color_picker
+        *show_set(s),  # input_image, preview_image, frame_slider
+        picker_hex(s["color"], active),  # color_picker
         s["color"] is None,  # no_color_checkbox
-        *_extract_updates(s),  # start_sec, end_sec, interval_sec
+        *extract_updates(s),  # start_sec, end_sec, interval_sec
     )
 
 
 def set_color(sets: list, active: int, value):
     """Store a user-picked colour on the active set (clears 'no colour')."""
-    rgb = _parse_color(value)
+    rgb = parse_color(value)
     if rgb is not None and 0 <= active < len(sets):
         sets[active]["color"] = rgb
     return sets, False  # picking a colour implies the set is coloured
@@ -203,7 +185,7 @@ def toggle_no_color(sets: list, active: int, no_color: bool, picker_value):
         if no_color:
             sets[active]["color"] = None
         else:
-            sets[active]["color"] = _parse_color(picker_value) or _next_color(active)
+            sets[active]["color"] = parse_color(picker_value) or next_color(active)
     return sets
 
 
@@ -235,7 +217,7 @@ def _ingest_frames(
     frames_rgb = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames_bgr]
 
     if not sets:
-        sets = [_new_set(_next_color(0))]
+        sets = [new_set(next_color(0))]
         active = 0
     s = sets[active]
     s["dir"] = source_label
@@ -309,14 +291,7 @@ def load_image_files(files: list, sets: list, active: int):
     if not frames:
         gr.Warning("No images (.png/.jpg/.jpeg) found in the dropped folder")
         return None, None, gr.update(), 0, sets, gr.update()
-    h, w = frames[0].shape[:2]
-    frames = [
-        cv2.resize(f, (w, h), interpolation=cv2.INTER_AREA)
-        if f.shape[:2] != (h, w)
-        else f
-        for f in frames
-    ]
-    return _ingest_frames(frames, sets, active, "(dropped folder)", None)
+    return _ingest_frames(resize_to_first(frames), sets, active, "(dropped folder)", None)
 
 
 def on_video_drop(video_path):
@@ -326,7 +301,7 @@ def on_video_drop(video_path):
     if Path(video_path).suffix.lower() not in VIDEO_EXTS:
         gr.Warning(f"Not a supported video file: {video_path}")
         return None, None
-    return video_path, _playable_video(video_path)
+    return video_path, playable_video(video_path)
 
 
 def on_image_click(
@@ -352,12 +327,7 @@ def on_image_click(
     rgb = s["frames"][current_idx]
     mask = run_predictor_on_frame(rgb, pts)
     s["masks"][current_idx] = mask
-
-    img_with_points = _draw_points(rgb, pts)
-    preview = _overlay_mask(rgb, mask) if mask is not None else rgb.copy()
-    preview = _draw_points(preview, pts)
-
-    return img_with_points, preview, sets
+    return *current_views(s["frames"], s["points_map"], current_idx, s["masks"]), sets
 
 
 def undo_point(sets: list, active: int, current_idx: int):
@@ -373,10 +343,7 @@ def undo_point(sets: list, active: int, current_idx: int):
             s["masks"][current_idx] = run_predictor_on_frame(rgb, pts)
         else:
             s["masks"][current_idx] = None
-    img, preview, _, _ = _current_views(
-        s["frames"], s["points_map"], current_idx, s["masks"]
-    )
-    return img, preview, sets
+    return *current_views(s["frames"], s["points_map"], current_idx, s["masks"]), sets
 
 
 def clear_points(sets: list, active: int, current_idx: int):
@@ -387,10 +354,7 @@ def clear_points(sets: list, active: int, current_idx: int):
     s["points_map"][current_idx] = []
     if current_idx < len(s["masks"]):
         s["masks"][current_idx] = None
-    img, preview, _, _ = _current_views(
-        s["frames"], s["points_map"], current_idx, s["masks"]
-    )
-    return img, preview, sets
+    return *current_views(s["frames"], s["points_map"], current_idx, s["masks"]), sets
 
 
 def change_frame(sets: list, active: int, frame_idx: int):
@@ -399,5 +363,4 @@ def change_frame(sets: list, active: int, frame_idx: int):
     if not (0 <= active < len(sets)) or not sets[active]["frames"]:
         return None, None, idx
     s = sets[active]
-    img, preview, _, _ = _current_views(s["frames"], s["points_map"], idx, s["masks"])
-    return img, preview, idx
+    return *current_views(s["frames"], s["points_map"], idx, s["masks"]), idx

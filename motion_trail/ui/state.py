@@ -9,7 +9,7 @@ import gradio as gr
 import numpy as np
 
 
-def _draw_points(image: np.ndarray, points: list[tuple[int, int, int]]) -> np.ndarray:
+def draw_points(image: np.ndarray, points: list[tuple[int, int, int]]) -> np.ndarray:
     """Draw coloured circles on *image* for each (x, y, label) tuple."""
     vis = image.copy()
     for x, y, label in points:
@@ -19,7 +19,7 @@ def _draw_points(image: np.ndarray, points: list[tuple[int, int, int]]) -> np.nd
     return vis
 
 
-def _overlay_mask(
+def overlay_mask(
     image: np.ndarray, mask: np.ndarray, colour=(0, 180, 0), alpha=0.45
 ) -> np.ndarray:
     """Blend a semi-transparent coloured mask onto *image* (RGB)."""
@@ -43,12 +43,12 @@ PALETTE_RGB = [
 ]
 
 
-def _next_color(n: int) -> tuple[int, int, int]:
+def next_color(n: int) -> tuple[int, int, int]:
     """Pick a distinct palette colour for the n-th set (cycles if needed)."""
     return PALETTE_RGB[n % len(PALETTE_RGB)]
 
 
-def _new_set(color: tuple[int, int, int]) -> dict:
+def new_set(color: tuple[int, int, int]) -> dict:
     """Create an empty set record."""
     return {
         "dir": "",  # source folder
@@ -61,14 +61,14 @@ def _new_set(color: tuple[int, int, int]) -> dict:
     }
 
 
-def _set_choices(sets: list) -> list[str]:
+def set_choices(sets: list) -> list[str]:
     """Radio labels for the current sets."""
     return [f"Set {i + 1}" for i in range(len(sets))]
 
 
-def _label_to_index(label, sets: list) -> int:
+def label_to_index(label, sets: list) -> int:
     """Map a selector label back to its set index."""
-    choices = _set_choices(sets)
+    choices = set_choices(sets)
     if label in choices:
         return choices.index(label)
     m = re.match(r"Set (\d+)", str(label or ""))
@@ -77,18 +77,18 @@ def _label_to_index(label, sets: list) -> int:
     return 0
 
 
-def _rgb_to_hex(color: tuple[int, int, int]) -> str:
+def rgb_to_hex(color: tuple[int, int, int]) -> str:
     """(R, G, B) -> '#rrggbb' for the colour picker."""
     r, g, b = color
     return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
 
 
-def _picker_hex(color, idx: int) -> str:
+def picker_hex(color, idx: int) -> str:
     """Colour-picker hex for a set (placeholder palette colour if 'no colour')."""
-    return _rgb_to_hex(color if color is not None else _next_color(idx))
+    return rgb_to_hex(color if color is not None else next_color(idx))
 
 
-def _parse_color(value) -> tuple[int, int, int] | None:
+def parse_color(value) -> tuple[int, int, int] | None:
     """Parse a picker value ('#rrggbb' or 'rgb(...)') to (R, G, B)."""
     if not value:
         return None
@@ -107,7 +107,7 @@ def _parse_color(value) -> tuple[int, int, int] | None:
     return None
 
 
-def _extract_updates(s: dict):
+def extract_updates(s: dict):
     """Start / End / Interval updates for the set's own extraction (none: untouched)."""
     ex = s.get("extract")
     if not ex:
@@ -119,14 +119,27 @@ def _extract_updates(s: dict):
     )
 
 
-def _current_views(frames, points_map, idx, masks):
-    """Return (input_image, preview, points_map, masks) for the frame *idx*."""
+def current_views(frames, points_map, idx, masks):
+    """Return (input_image, preview) for the frame *idx*."""
     if not frames:
-        return None, None, points_map, masks
+        return None, None
     rgb = frames[idx]
     pts = points_map.get(idx, [])
-    img_with_points = _draw_points(rgb, pts)
+    img_with_points = draw_points(rgb, pts)
     mask = masks[idx] if masks and idx < len(masks) else None
-    preview = _overlay_mask(rgb, mask) if mask is not None else rgb.copy()
-    preview = _draw_points(preview, pts)
-    return img_with_points, preview, points_map, masks
+    preview = overlay_mask(rgb, mask) if mask is not None else rgb.copy()
+    preview = draw_points(preview, pts)
+    return img_with_points, preview
+
+
+def show_set(s: dict, idx: int = 0):
+    """(input_image, preview, frame_slider) showing frame *idx* of set *s*."""
+    if not s["frames"]:
+        return None, None, gr.update(maximum=0, value=0)
+    img, preview = current_views(s["frames"], s["points_map"], idx, s["masks"])
+    return img, preview, gr.update(maximum=len(s["frames"]) - 1, value=idx)
+
+
+def selector_update(sets: list, active: int):
+    """Set selector showing *active* among *sets*."""
+    return gr.update(choices=set_choices(sets), value=f"Set {active + 1}")

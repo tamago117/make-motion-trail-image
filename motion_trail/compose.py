@@ -12,12 +12,9 @@ def overlay_object_on_background(
     background: np.ndarray,
     object_layers: List[Tuple[np.ndarray, np.ndarray]],
     alpha: float = 0.5,
-    last_opaque: bool = True,
-    opaque_indices: set | None = None,
+    opaque_indices: set = frozenset(),
 ) -> np.ndarray:
     """Alpha-blend object layers onto *background*; *opaque_indices* are pasted solid."""
-    if opaque_indices is None:
-        opaque_indices = {len(object_layers) - 1} if last_opaque else set()
     output = background.copy()
     for idx, (frame, mask) in enumerate(object_layers):
         m = mask.astype(bool)

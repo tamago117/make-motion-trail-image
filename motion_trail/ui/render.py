@@ -19,13 +19,13 @@ from motion_trail.session import (
     load_session,
     save_session,
 )
-from motion_trail.ui.edit import _playable_video
+from motion_trail.ui.edit import playable_video
 from motion_trail.ui.state import (
-    _current_views,
-    _new_set,
-    _next_color,
-    _picker_hex,
-    _set_choices,
+    new_set,
+    next_color,
+    picker_hex,
+    selector_update,
+    show_set,
 )
 from motion_trail.video import VIDEO_OUT_EXTS, write_video
 
@@ -240,14 +240,8 @@ def save_session_cb(
     return gr.update(choices=list_sessions(), value=path.name), path.name
 
 
-def _autosave(autosave: bool, save_args: tuple):
-    """Save the session under the name in the box, if autosave is on."""
-    if not autosave:
-        return gr.update(), gr.update()
-    return save_session_cb(*save_args)
-
-
-def generate_and_autosave(
+def _render_and_autosave(
+    kind: str,
     sets: list,
     background,
     alpha: float,
@@ -265,87 +259,50 @@ def generate_and_autosave(
     interval_sec: float,
     autosave: bool,
 ):
-    """Generate the still composite, then snapshot the session behind it."""
-    result = generate_composite(
-        sets, background, alpha, tint_strength, emphasis_label, output_path
-    )
-    if result is None:
-        return result, gr.update(), gr.update()
-    selector, saved_name = _autosave(
-        autosave,
-        (
+    """Render the still or the video, then save the session if autosave is on."""
+    if kind == "video":
+        result = generate_video(
             sets,
-            active,
-            idx,
             background,
-            video_path,
-            name,
-            start_sec,
-            end_sec,
-            interval_sec,
             alpha,
             tint_strength,
             emphasis_label,
-            output_path,
             video_output_path,
             video_fps,
-        ),
-    )
-    return result, selector, saved_name
-
-
-def generate_video_and_autosave(
-    sets: list,
-    background,
-    alpha: float,
-    tint_strength: float,
-    emphasis_label: str,
-    output_path: str,
-    video_output_path: str,
-    video_fps: float,
-    active: int,
-    idx: int,
-    video_path,
-    name: str,
-    start_sec: str,
-    end_sec: str,
-    interval_sec: float,
-    autosave: bool,
-):
-    """Render the growing-trail video, then snapshot the session behind it."""
-    result = generate_video(
+            interval_sec,
+        )
+    else:
+        result = generate_composite(
+            sets, background, alpha, tint_strength, emphasis_label, output_path
+        )
+    if result is None or not autosave:
+        return result, gr.update(), gr.update()
+    selector, saved_name = save_session_cb(
         sets,
+        active,
+        idx,
         background,
+        video_path,
+        name,
+        start_sec,
+        end_sec,
+        interval_sec,
         alpha,
         tint_strength,
         emphasis_label,
+        output_path,
         video_output_path,
         video_fps,
-        interval_sec,
-    )
-    if result is None:
-        return result, gr.update(), gr.update()
-    selector, saved_name = _autosave(
-        autosave,
-        (
-            sets,
-            active,
-            idx,
-            background,
-            video_path,
-            name,
-            start_sec,
-            end_sec,
-            interval_sec,
-            alpha,
-            tint_strength,
-            emphasis_label,
-            output_path,
-            video_output_path,
-            video_fps,
-        ),
     )
     return result, selector, saved_name
+
+
+def generate_and_autosave(*render_inputs):
+    return _render_and_autosave("image", *render_inputs)
+
+
+def generate_video_and_autosave(*render_inputs):
+    return _render_and_autosave("video", *render_inputs)
 
 
 def restore_session_cb(name):
@@ -359,22 +316,12 @@ def restore_session_cb(name):
         gr.Warning(f"Could not restore session '{name}': {exc}")
         return _no_restore()
 
-    sets = data["sets"] or [_new_set(_next_color(0))]
+    sets = data["sets"] or [new_set(next_color(0))]
     active = min(max(data["active"], 0), len(sets) - 1)
     s = sets[active]
 
-    if s["frames"]:
-        # Keep st_idx and the slider in sync: change_frame only fires on
-        # .release, so a mismatch would annotate a frame that isn't shown.
-        idx = min(max(data["idx"], 0), len(s["frames"]) - 1)
-        img, preview, _, _ = _current_views(
-            s["frames"], s["points_map"], idx, s["masks"]
-        )
-        slider = gr.update(maximum=max(len(s["frames"]) - 1, 0), value=idx)
-    else:
-        idx = 0
-        img, preview = None, None
-        slider = gr.update(maximum=0, value=0)
+    # st_idx must match the slider: change_frame only fires on .release
+    idx = min(max(data["idx"], 0), len(s["frames"]) - 1) if s["frames"] else 0
 
     bg = data["background_bgr"]
     bg_rgb = cv2.cvtColor(bg, cv2.COLOR_BGR2RGB) if bg is not None else None
@@ -382,7 +329,7 @@ def restore_session_cb(name):
     # the uploaded video is usually gone by now; the frames are restored anyway
     video_path = data["video_path"]
     if video_path and Path(video_path).is_file():
-        player = _playable_video(video_path)
+        player = playable_video(video_path)
     else:
         video_path, player = None, None
 
@@ -399,11 +346,9 @@ def restore_session_cb(name):
         idx,  # st_idx
         bg,  # st_bg
         video_path,  # st_video
-        gr.update(choices=_set_choices(sets), value=f"Set {active + 1}"),
-        img,  # input_image
-        preview,  # preview_image
-        slider,  # frame_slider
-        _picker_hex(s["color"], active),  # color_picker
+        selector_update(sets, active),  # set_selector
+        *show_set(s, idx),  # input_image, preview_image, frame_slider
+        picker_hex(s["color"], active),  # color_picker
         s["color"] is None,  # no_color_checkbox
         bg_rgb,  # bg_preview
         player,  # video_player
