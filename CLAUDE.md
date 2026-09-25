@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Interactive Gradio GUI tool that creates motion-trail composite images using SAM 3 (Segment Anything Model 3). Users click on objects across a sequence of frames to segment them, then generate a single composite showing the object's motion trail over a median-estimated background.
+Interactive Gradio GUI tool that creates motion-trail composite images using SAM 3 (Segment Anything Model 3). Users click on objects across a sequence of frames to segment them, then generate a single composite showing the object's motion trail over a background frame the user picks.
 
 ## Commands
 
@@ -27,7 +27,7 @@ make check-hooks
 The application is split into two modules:
 
 - **`core.py`** — framework-independent logic:
-  1. **Image utilities** (`load_images`, `generate_background`, `overlay_object_on_background`, `compose_multi_set`) — pure NumPy/OpenCV functions for loading frames, computing median backgrounds, and alpha-compositing segmented objects.
+  1. **Image utilities** (`load_images`, `overlay_object_on_background`, `compose_multi_set`) — pure NumPy/OpenCV functions for loading frames and alpha-compositing segmented objects.
   2. **Video output** (`compose_multi_set_progressive`, `pace_steps`, `write_video`) — renders the trail growing over time and encodes it (ffmpeg H.264, falling back to OpenCV).
   3. **Session persistence** (`save_session`, `load_session`, `list_sessions`) — saves / restores the whole workspace under `sessions/<name>/`.
   4. **SAM 3 integration** (`_get_model_and_processor`, `run_predictor_on_frame`) — lazily initializes the SAM 3 model from HuggingFace and runs interactive point-prompt segmentation per frame. The `sam3` package is installed from the Facebook Research GitHub repo.

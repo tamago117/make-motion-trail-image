@@ -142,12 +142,6 @@ def _interval_indices(
     return indices
 
 
-def generate_background(frames: List[np.ndarray]) -> np.ndarray:
-    """Median pixel value across the time dimension -> static background."""
-    stack = np.stack(frames, axis=0).astype(np.uint8)
-    return np.median(stack, axis=0).astype(np.uint8)
-
-
 def overlay_object_on_background(
     background: np.ndarray,
     object_layers: List[Tuple[np.ndarray, np.ndarray]],
